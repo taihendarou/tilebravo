@@ -6,7 +6,7 @@ import { codec2bppPlanarComposite } from "./codec-2bpp-planar-composite";
 
 export const CODECS: Record<string, TileCodec> = {
   [codec2bppPlanar.id]: codec2bppPlanar,
-  [codec4bppPlanar.id]: codec4bppPlanar,
+  [codec4bppPlanar.id]: codec4bppPlanar,  
   [codec2bppPlanarComposite.id]: codec2bppPlanarComposite,
 };
 

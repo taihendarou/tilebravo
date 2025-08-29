@@ -1,5 +1,5 @@
 import { CODECS } from "./codecs";
-import type { CodecId } from "./types";
+import type { CodecId } from "./codecs";
 
 /**
  * Calcula:

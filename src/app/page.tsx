@@ -137,7 +137,7 @@ export default function Page() {
       setRawBytes(blank);
       setFileName("untitled.bin");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawBytes, codec]);
 
   // mantém currentColor dentro do range caso a paleta mude
@@ -243,7 +243,7 @@ export default function Page() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selection, tilesPerRow, tiles.length]);
+  }, [tiles, palette.length, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, selection]);
 
   function reDecode() {
     if (!rawBytes) return;
@@ -568,11 +568,6 @@ export default function Page() {
     setSelection(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setIsDirty(false); // <-- novo documento em branco “limpo”
-  }
-
-
-  function onDecodeInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") reDecode();
   }
 
   return (

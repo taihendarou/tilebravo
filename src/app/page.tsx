@@ -574,7 +574,7 @@ export default function Page() {
     <main className="w-screen h-screen flex flex-col pb-1">
       {/* Top bar */}
       <header className="h-12 flex items-center gap-3 px-4 border-b bg-white">
-        <strong className="text-sm">Tile Editor</strong>
+        <strong className="text-sm">TileBravo</strong>
 
         {/* Input escondido */}
         <input

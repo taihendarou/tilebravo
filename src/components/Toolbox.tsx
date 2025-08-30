@@ -21,8 +21,7 @@ export default function Toolbox({
   currentColor,
 }: Props) {
   const btn = (active: boolean) =>
-    `w-10 h-10 border rounded flex items-center justify-center ${
-      active ? "bg-gray-200" : "bg-white hover:bg-gray-100"
+    `w-10 h-10 border rounded flex items-center justify-center ${active ? "bg-gray-200" : "bg-white hover:bg-gray-100"
     }`;
 
   return (
@@ -57,7 +56,7 @@ export default function Toolbox({
       <button
         onClick={onZoomIn}
         className="w-10 h-10 border rounded flex items-center justify-center bg-white hover:bg-gray-100"
-        title="Zoom in"
+        title="Zoom in (+ / =)"
         aria-label="Zoom in"
       >
         <ZoomIn size={18} />
@@ -66,7 +65,7 @@ export default function Toolbox({
       <button
         onClick={onZoomOut}
         className="w-10 h-10 border rounded flex items-center justify-center bg-white hover:bg-gray-100"
-        title="Zoom out"
+        title="Zoom out (-)"
         aria-label="Zoom out"
       >
         <ZoomOut size={18} />

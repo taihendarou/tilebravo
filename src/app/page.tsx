@@ -65,10 +65,7 @@ export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pngInputRef = useRef<HTMLInputElement | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   const [isViewportFocused, setIsViewportFocused] = useState(false);
-
-
 
   // Ferramenta
   const [tool, setTool] = useState<ToolId>("pencil");
@@ -101,8 +98,7 @@ export default function Page() {
   const [viewportTilesY, setViewportTilesY] = useState<number>(16);
   const [showTileGrid, setShowTileGrid] = useState<boolean>(true);
   const [showPixelGrid, setShowPixelGrid] = useState<boolean>(false);
-  const [isDirty, setIsDirty] = useState(false); // Dirty state (indica alterações não salvas)
-
+  const [isDirty, setIsDirty] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
 
@@ -196,13 +192,37 @@ export default function Page() {
   // atalhos. Cmd/Ctrl+C/V já existem abaixo. Aqui 1..4 e B, V, I.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // selecionar cor 1..9
-      const num = parseInt(e.key, 10);
-      if (!isNaN(num) && num >= 0 && num <= 9 && num < palette.length) {
-        setCurrentColor(num); // cor 0 = primeira, 1 = segunda, etc.
+      // não capturar quando o foco estiver em inputs
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || (t as any).isContentEditable)) {
+        return;
       }
 
-      // copiar/colar seleção
+      // 0..9 escolhe cor
+      const num = parseInt(e.key, 10);
+      if (!isNaN(num) && num >= 0 && num <= 9 && num < palette.length) {
+        setCurrentColor(num);
+      }
+
+      // atalhos de ferramenta sem modificadores
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "b") { setTool("pencil"); e.preventDefault(); return; }
+        if (k === "v") { setTool("select"); e.preventDefault(); return; }
+        if (k === "i") { setTool("eyedropper"); e.preventDefault(); return; }
+      }
+
+      // Zoom in / out
+      if (e.key === "=" || e.key === "+") {
+        setPixelSize((p) => Math.max(2, Math.min(64, (p || 2) + 1)));
+        e.preventDefault();
+      }
+      if (e.key === "-" || e.key === "_") {
+        setPixelSize((p) => Math.max(2, Math.min(64, (p || 2) - 1)));
+        e.preventDefault();
+      }
+
+      // copiar
       const meta = e.metaKey || e.ctrlKey;
       if (meta && e.key.toLowerCase() === "c") {
         if (!selection) return;
@@ -210,9 +230,10 @@ export default function Page() {
         const copied: Uint8Array[] = [];
         for (let ty = 0; ty < h; ty++) {
           for (let tx = 0; tx < w; tx++) {
-            const srcIndex = getTileIndex(x + tx, y + ty, tilesPerRow);
-            if (srcIndex >= 0 && srcIndex < tiles.length) {
-              copied.push(new Uint8Array(tiles[srcIndex]));
+            const srcIndex = y * tilesPerRow + x + ty * tilesPerRow + tx - y * tilesPerRow;
+            const idx = (y + ty) * tilesPerRow + (x + tx);
+            if (idx >= 0 && idx < tiles.length) {
+              copied.push(new Uint8Array(tiles[idx]));
             }
           }
         }
@@ -220,14 +241,13 @@ export default function Page() {
         e.preventDefault();
       }
 
+      // colar só quando o viewport estiver focado
       if (meta && e.key.toLowerCase() === "v") {
         if (!isViewportFocused) return;
         const clip = clipboardRef.current;
         if (!clip) return;
         const targetX = selection ? selection.x : 0;
         const targetY = selection ? selection.y : 0;
-
-
         setTiles(prev => {
           const next = prev.slice();
           for (let ty = 0; ty < clip.h; ty++) {
@@ -235,7 +255,7 @@ export default function Page() {
               const dstX = targetX + tx;
               const dstY = targetY + ty;
               if (dstX < 0 || dstY < 0) continue;
-              const dstIndex = getTileIndex(dstX, dstY, tilesPerRow);
+              const dstIndex = dstY * tilesPerRow + dstX;
               if (dstIndex >= 0 && dstIndex < next.length) {
                 const srcIndex = ty * clip.w + tx;
                 next[dstIndex] = new Uint8Array(clip.tiles[srcIndex]);
@@ -244,14 +264,13 @@ export default function Page() {
           }
           return next;
         });
-        setIsDirty(true); // <— aqui
+        setIsDirty(true);
         e.preventDefault();
-
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [tiles, palette.length, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, selection]);
+  }, [tiles, palette.length, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, selection, isViewportFocused]);
 
   function reDecode() {
     if (!rawBytes) return;
@@ -782,41 +801,55 @@ export default function Page() {
           style={{ display: "none" }}
         />
 
-        {/* Botões */}
+        {/* Botões (esquerda) */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
+          className="px-3 py-1 text-sm rounded border border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+          title="Open file"
         >
           Open
         </button>
+
+        <button
+          onClick={() => pngInputRef.current?.click()}
+          className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50"
+          title="Import PNG"
+        >
+          Import PNG
+        </button>
+
+        <button
+          onClick={downloadPng}
+          className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50"
+          title="Export PNG"
+        >
+          Export PNG {selection ? "(selection)" : ""}
+        </button>
+
+        <button
+          onClick={downloadBin}
+          className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50"
+          title="Export BIN"
+        >
+          Export BIN {selection ? "(selection)" : ""}
+        </button>
+
+        {/* divisor sutil */}
+        <span className="mx-2 h-6 w-px bg-gray-300 inline-block" />
+
+        {/* Clear isolado à direita em vermelho */}
         <button
           onClick={() => {
             if (window.confirm("Are you sure you want to clear the file? All unsaved changes will be lost.")) {
               clearAll();
             }
           }}
-          className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
+          className="ml-2 px-3 py-1 text-sm rounded border border-red-500 text-red-600 bg-white hover:bg-red-50"
+          title="Clear / New File"
         >
           Clear / New File
         </button>
-        <button
-          onClick={downloadBin}
-          className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
-        >
-          Export BIN {selection ? "(selection)" : ""}
-        </button>
-        <button
-          onClick={downloadPng}
-          className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
-        >
-          Export PNG {selection ? "(selection)" : ""}
-        </button>
-        <button
-          onClick={() => pngInputRef.current?.click()}
-          className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
-        >
-          Import PNG
-        </button>
+
 
 
         <input
@@ -914,7 +947,6 @@ export default function Page() {
         {/* Área do canvas */}
         <section className="p-3 h-full min-h-0 min-w-0 overflow-scroll scroll-stable scroll-area">
           <div
-            ref={viewportRef}
             className="border rounded relative outline-none overflow-scroll scroll-area"
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
@@ -959,9 +991,11 @@ export default function Page() {
           </svg>\") 1 22, auto" :
                     tool === "eyedropper"
                       ? "url(\"data:image/svg+xml;utf8,\
-<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>\
-<path d='M19.35 7.04l-2.39-2.39c-.39-.39-1.02-.39-1.41 0L14.34 6.46l2.12 2.12-9.19 9.19L5 19l1.23-2.27 9.19-9.19 2.12 2.12 1.21-1.21c.39-.39.39-1.02 0-1.41z' fill='black' stroke='white' stroke-width='2'/>\
-</svg>\") 4 15, auto" :
+  <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='lucide lucide-pipette-icon lucide-pipette'>\
+  <path d='m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12'/>\
+  <path d='m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z'/>\
+  <path d='m2 22 .414-.414'/>\
+  </svg>\") 4 15, auto" :
                       tool === "select" ? "cell" :
                         "default",
               }}

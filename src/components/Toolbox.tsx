@@ -8,9 +8,18 @@ interface Props {
   onSelectTool: (t: ToolId) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  palette: string[];
+  currentColor: number;
 }
 
-export default function Toolbox({ tool, onSelectTool, onZoomIn, onZoomOut }: Props) {
+export default function Toolbox({
+  tool,
+  onSelectTool,
+  onZoomIn,
+  onZoomOut,
+  palette,
+  currentColor,
+}: Props) {
   const btn = (active: boolean) =>
     `w-10 h-10 border rounded flex items-center justify-center ${
       active ? "bg-gray-200" : "bg-white hover:bg-gray-100"
@@ -45,7 +54,6 @@ export default function Toolbox({ tool, onSelectTool, onZoomIn, onZoomOut }: Pro
         <Pipette size={18} />
       </button>
 
-      {/* Zoom In */}
       <button
         onClick={onZoomIn}
         className="w-10 h-10 border rounded flex items-center justify-center bg-white hover:bg-gray-100"
@@ -55,7 +63,6 @@ export default function Toolbox({ tool, onSelectTool, onZoomIn, onZoomOut }: Pro
         <ZoomIn size={18} />
       </button>
 
-      {/* Zoom Out */}
       <button
         onClick={onZoomOut}
         className="w-10 h-10 border rounded flex items-center justify-center bg-white hover:bg-gray-100"
@@ -64,6 +71,14 @@ export default function Toolbox({ tool, onSelectTool, onZoomIn, onZoomOut }: Pro
       >
         <ZoomOut size={18} />
       </button>
+
+      {/* Current color preview */}
+      <div
+        className="w-10 h-10 border rounded"
+        title={`Current color: ${palette[currentColor] ?? "N/A"}`}
+        style={{ backgroundColor: palette[currentColor] ?? "#000" }}
+        aria-label="Current color preview"
+      />
     </aside>
   );
 }

@@ -64,6 +64,11 @@ function createBlankFile(tileCount: number, codecId: CodecId): Uint8Array {
 export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pngInputRef = useRef<HTMLInputElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [isViewportFocused, setIsViewportFocused] = useState(false);
+
+
 
   // Ferramenta
   const [tool, setTool] = useState<ToolId>("pencil");
@@ -73,9 +78,9 @@ export default function Page() {
 
   // Paleta e edição
   const [palette, setPalette] = useState<string[]>(
-  // paleta inicial vem do codec atual (2bpp)
-  CODECS["2bpp_planar"].defaultPalette ?? ["#000000", "#555555", "#AAAAAA", "#FFFFFF"]
-);
+    // paleta inicial vem do codec atual (2bpp)
+    CODECS["2bpp_planar"].defaultPalette ?? ["#000000", "#555555", "#AAAAAA", "#FFFFFF"]
+  );
 
   const [currentColor, setCurrentColor] = useState<number>(0); // índice 0..3
 
@@ -97,7 +102,8 @@ export default function Page() {
   const [showTileGrid, setShowTileGrid] = useState<boolean>(true);
   const [showPixelGrid, setShowPixelGrid] = useState<boolean>(false);
   const [isDirty, setIsDirty] = useState(false); // Dirty state (indica alterações não salvas)
- 
+
+  const [isDragging, setIsDragging] = useState(false);
 
 
   // Seleção e clipboard
@@ -137,7 +143,7 @@ export default function Page() {
       setRawBytes(blank);
       setFileName("untitled.bin");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawBytes, codec]);
 
   // mantém currentColor dentro do range caso a paleta mude
@@ -157,12 +163,12 @@ export default function Page() {
 
     if (tiles.length > 0) {
       renderCanvas(ctx, {
-      tiles,
-      palette,
-      tilesPerRow,
-      pixelSize,
-      showTileGrid,
-      showPixelGrid,
+        tiles,
+        palette,
+        tilesPerRow,
+        pixelSize,
+        showTileGrid,
+        showPixelGrid,
         selection: selection ?? undefined,
         selectionPreview:
           selection && selectionDragRef.current.mode === "move"
@@ -215,29 +221,31 @@ export default function Page() {
       }
 
       if (meta && e.key.toLowerCase() === "v") {
+        if (!isViewportFocused) return;
         const clip = clipboardRef.current;
         if (!clip) return;
         const targetX = selection ? selection.x : 0;
         const targetY = selection ? selection.y : 0;
 
-      setTiles(prev => {
-        const next = prev.slice();
-        for (let ty = 0; ty < clip.h; ty++) {
-          for (let tx = 0; tx < clip.w; tx++) {
-            const dstX = targetX + tx;
-            const dstY = targetY + ty;
-            if (dstX < 0 || dstY < 0) continue;
-            const dstIndex = getTileIndex(dstX, dstY, tilesPerRow);
-            if (dstIndex >= 0 && dstIndex < next.length) {
-              const srcIndex = ty * clip.w + tx;
-              next[dstIndex] = new Uint8Array(clip.tiles[srcIndex]);
+
+        setTiles(prev => {
+          const next = prev.slice();
+          for (let ty = 0; ty < clip.h; ty++) {
+            for (let tx = 0; tx < clip.w; tx++) {
+              const dstX = targetX + tx;
+              const dstY = targetY + ty;
+              if (dstX < 0 || dstY < 0) continue;
+              const dstIndex = getTileIndex(dstX, dstY, tilesPerRow);
+              if (dstIndex >= 0 && dstIndex < next.length) {
+                const srcIndex = ty * clip.w + tx;
+                next[dstIndex] = new Uint8Array(clip.tiles[srcIndex]);
+              }
             }
           }
-        }
-        return next;
-      });
-      setIsDirty(true); // <— aqui
-      e.preventDefault();
+          return next;
+        });
+        setIsDirty(true); // <— aqui
+        e.preventDefault();
 
       }
     }
@@ -503,7 +511,7 @@ export default function Page() {
 
   const onCanvasMouseLeave = () => {
     setHoverInfo({ tileOffsetHex: null, pixelOffsetHex: null });
-  };  
+  };
 
   // Exportar .bin usando codec atual
   function downloadBin() {
@@ -547,15 +555,206 @@ export default function Page() {
     setIsDirty(false); // <-- consideramos exportar BIN como “salvar”
   }
 
+  function collectTilesForExport(): { tiles: Uint8Array[]; tilesPerRowExp: number } {
+    if (!selection) return { tiles, tilesPerRowExp: tilesPerRow };
+
+    const { x, y, w, h } = selection;
+    const picked: Uint8Array[] = [];
+    for (let ty = 0; ty < h; ty++) {
+      for (let tx = 0; tx < w; tx++) {
+        const idx = getTileIndex(x + tx, y + ty, tilesPerRow);
+        if (idx >= 0 && idx < tiles.length) picked.push(new Uint8Array(tiles[idx]));
+      }
+    }
+    return { tiles: picked, tilesPerRowExp: w };
+  }
+
+  function downloadPng() {
+    const { tiles: tilesExp, tilesPerRowExp } = collectTilesForExport();
+    if (tilesExp.length === 0) return;
+
+    // canvas offscreen
+    const off = document.createElement("canvas");
+    const ctx = off.getContext("2d");
+    if (!ctx) return;
+
+    // render em zoom 1, sem grids, sem seleção
+    // importante: desabilitar smoothing
+    ctx.imageSmoothingEnabled = false;
+
+    renderCanvas(ctx, {
+      tiles: tilesExp,
+      palette,
+      tilesPerRow: tilesPerRowExp,
+      pixelSize: 1,
+      showTileGrid: false,
+      showPixelGrid: false,
+      selection: undefined,
+      selectionPreview: null,
+    });
+
+    const a = document.createElement("a");
+    a.href = off.toDataURL("image/png");
+    let baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
+    if (selection) baseName += "_selection";
+    a.download = `${baseName}_${codec}.png`;
+    a.click();
+  }
+
+  async function readPngToImageData(file: File): Promise<ImageData> {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      // importante: blob URL não precisa de CORS, mas vamos cobrir onload/onerror
+      const loaded = new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = (e) => reject(new Error("Failed to load image"));
+      });
+      img.src = url;
+      // alguns browsers falham no decode(); preferimos onload robusto
+      await loaded;
+
+      const off = document.createElement("canvas");
+      off.width = img.naturalWidth || img.width;
+      off.height = img.naturalHeight || img.height;
+      const ctx = off.getContext("2d");
+      if (!ctx) throw new Error("No 2D context");
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, off.width, off.height);
+      return imageData;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+
+  type RGB = [number, number, number];
+  const hexToRgb = (hex: string): RGB => {
+    const h = hex.startsWith("#") ? hex.slice(1) : hex;
+    const n = parseInt(h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const dist2 = (a: RGB, b: RGB) => {
+    const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
+    return dr * dr + dg * dg + db * db;
+  };
+  function imageDataToTilesByPalette(img: ImageData, paletteHex: string[]) {
+    const w = img.width, h = img.height, data = img.data;
+    const pal = paletteHex.map(hexToRgb);
+    const pixels = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const o = i * 4, a = data[o + 3];
+      if (a < 128) { pixels[i] = 0; continue; }
+      const r = data[o], g = data[o + 1], b = data[o + 2];
+      let best = 0, bestD = Infinity;
+      for (let p = 0; p < pal.length; p++) {
+        const d = dist2([r, g, b], pal[p]);
+        if (d < bestD) { bestD = d; best = p; if (d === 0) break; }
+      }
+      pixels[i] = best;
+    }
+    const tilesX = w / 8, tilesY = h / 8;
+    const tiles: Uint8Array[] = [];
+    for (let ty = 0; ty < tilesY; ty++) {
+      for (let tx = 0; tx < tilesX; tx++) {
+        const tile = new Uint8Array(64);
+        let k = 0;
+        for (let py = 0; py < 8; py++) {
+          const row = (ty * 8 + py) * w + (tx * 8);
+          for (let px = 0; px < 8; px++) tile[k++] = pixels[row + px];
+        }
+        tiles.push(tile);
+      }
+    }
+    return { tiles, tilesX, tilesY };
+  }
+
+
+
   // DnD
   function onDragOver(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
+    setIsDragging(true);
   }
+
+  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setIsDragging(false);
+  }
+
   async function onDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
+    setIsDragging(false);
     const f = e.dataTransfer.files?.[0];
     if (f) await handleFile(f);
   }
+
+
+  // Atualiza o título da aba com estado atual
+  useEffect(() => {
+    const base = "TileBravo";
+    const name = fileName || "untitled.bin";
+    const star = isDirty ? "* " : "";
+    document.title = `${star}${name} · ${codec} · ${base}`;
+  }, [fileName, isDirty, codec]);
+
+  // Aviso de alterações não salvas ao fechar a janela (se houver)
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
+
+  // Carregar preferências do localStorage ao iniciar
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("tilebravo:prefs");
+      if (!raw) return;
+      const p = JSON.parse(raw);
+
+      if (p.codec) setCodec(p.codec);
+      if (typeof p.pixelSize === "number") setPixelSize(clamp(p.pixelSize, 2, 64));
+      if (typeof p.tilesPerRow === "number") setTilesPerRow(clamp(p.tilesPerRow, 1, 256));
+      if (typeof p.viewportTilesX === "number") setViewportTilesX(clamp(p.viewportTilesX, 1, 256));
+      if (typeof p.viewportTilesY === "number") setViewportTilesY(clamp(p.viewportTilesY, 1, 256));
+      if (typeof p.showTileGrid === "boolean") setShowTileGrid(p.showTileGrid);
+      if (typeof p.showPixelGrid === "boolean") setShowPixelGrid(p.showPixelGrid);
+      if (Array.isArray(p.palette)) setPalette(p.palette);
+    } catch { }
+  }, []);
+
+  // Salvar preferências sempre que algo relevante mudar
+  useEffect(() => {
+    const prefs = {
+      codec,
+      pixelSize,
+      tilesPerRow,
+      viewportTilesX,
+      viewportTilesY,
+      showTileGrid,
+      showPixelGrid,
+      palette,
+    };
+    try {
+      localStorage.setItem("tilebravo:prefs", JSON.stringify(prefs));
+    } catch { }
+  }, [
+    codec,
+    pixelSize,
+    tilesPerRow,
+    viewportTilesX,
+    viewportTilesY,
+    showTileGrid,
+    showPixelGrid,
+    palette,
+  ]);
+
 
   // Limpar
   function clearAll() {
@@ -571,11 +770,10 @@ export default function Page() {
   }
 
   return (
-    <main className="w-screen h-screen flex flex-col pb-1">
+    <main className="w-screen h-screen flex flex-col pb-1 overflow-hidden">
       {/* Top bar */}
       <header className="h-12 flex items-center gap-3 px-4 border-b bg-white">
         <strong className="text-sm">TileBravo</strong>
-
         {/* Input escondido */}
         <input
           ref={fileInputRef}
@@ -608,12 +806,78 @@ export default function Page() {
           Export BIN {selection ? "(selection)" : ""}
         </button>
         <button
-          onClick={() => alert("Export PNG function not implemented yet. Sorry bro.")}
+          onClick={downloadPng}
           className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
         >
           Export PNG {selection ? "(selection)" : ""}
         </button>
-        
+        <button
+          onClick={() => pngInputRef.current?.click()}
+          className="border rounded px-3 py-1 text-sm bg-gray-50 hover:bg-gray-100"
+        >
+          Import PNG
+        </button>
+
+
+        <input
+          ref={pngInputRef}
+          type="file"
+          accept="image/png"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) {
+              console.log("[PNG] no file selected");
+              return;
+            }
+            console.log("[PNG] selected:", f.name, f.type, f.size, "bytes");
+            try {
+              const imageData = await readPngToImageData(f);
+              const { width, height } = imageData;
+              console.log("[PNG] imageData:", width, "x", height);
+              if (width % 8 !== 0 || height % 8 !== 0) {
+                alert(`Image must be multiple of 8. Got ${width}x${height}.`);
+                return;
+              }
+
+              const { tiles: newTiles, tilesX, tilesY } = imageDataToTilesByPalette(imageData, palette);
+              console.log("[PNG] tiles:", { count: newTiles.length, tilesX, tilesY });
+
+              if (selection && selection.w === tilesX && selection.h === tilesY) {
+                setTiles(prev => {
+                  const next = prev.slice();
+                  let k = 0;
+                  for (let j = 0; j < selection.h; j++) {
+                    for (let i2 = 0; i2 < selection.w; i2++) {
+                      const idx = (selection.y + j) * tilesPerRow + (selection.x + i2);
+                      if (idx >= 0 && idx < next.length) next[idx] = new Uint8Array(newTiles[k++]);
+                    }
+                  }
+                  return next;
+                });
+              } else {
+                setTiles(newTiles);
+                setTilesPerRow(tilesX);
+                setViewportTilesX(Math.max(viewportTilesX, tilesX));
+                setViewportTilesY(Math.max(viewportTilesY, tilesY));
+                setSelection(null);
+              }
+
+              setIsDirty(true);
+              alert(`Imported ${tilesX}×${tilesY} tiles from PNG.`);
+            } catch (err) {
+              console.error("[PNG] import error:", err);
+              alert("Failed to import PNG.");
+            } finally {
+              // reseta para permitir reimportar o mesmo arquivo
+              if (pngInputRef.current) pngInputRef.current.value = "";
+            }
+
+          }}
+
+
+        />
+
 
         {/* Nome do arquivo */}
         <span
@@ -629,7 +893,11 @@ export default function Page() {
       </header>
 
       {/* Conteúdo. toolbar esquerda | viewport | painel direita */}
-      <div className="flex-1 grid" style={{ gridTemplateColumns: "64px 1fr 320px" }}>
+      <div
+        className="flex-1 grid overflow-hidden min-h-0"
+        style={{ gridTemplateColumns: "64px minmax(0,1fr) 320px" }}
+      >
+
 
         {/* Toolbar esquerda */}
         <Toolbox
@@ -637,20 +905,37 @@ export default function Page() {
           onSelectTool={setTool}
           onZoomIn={() => setPixelSize((p) => Math.max(2, Math.min(64, (p || 2) + 1)))}
           onZoomOut={() => setPixelSize((p) => Math.max(2, Math.min(64, (p || 2) - 1)))}
+          palette={palette}
+          currentColor={currentColor}
         />
 
+
+
         {/* Área do canvas */}
-        <section className="p-3">
+        <section className="p-3 h-full min-h-0 min-w-0 overflow-scroll scroll-stable scroll-area">
           <div
-            className="border rounded"
+            ref={viewportRef}
+            className="border rounded relative outline-none overflow-scroll scroll-area"
             onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
             onDrop={onDrop}
-            style={{
-              width: viewportTilesX * TILE_W * pixelSize,
-              height: viewportTilesY * TILE_H * pixelSize,
-              overflow: "auto",
+            onMouseDown={(e) => {
+              // garante foco ao clicar
+              e.currentTarget.focus();
             }}
+            onFocus={() => setIsViewportFocused(true)}
+            onBlur={() => setIsViewportFocused(false)}
+            tabIndex={0}
+            role="region"
+            aria-label="Tiles viewport"
+            style={{
+              width: viewportTilesX * TILE_W * pixelSize + 14,
+              height: viewportTilesY * TILE_H * pixelSize + 14,
+              display: "inline-block",
+            }}
+
           >
+
             <canvas
               ref={canvasRef}
               onMouseDown={onCanvasMouseDown}
@@ -663,8 +948,33 @@ export default function Page() {
                   pencilApply(px, py, tx, ty);
                 }
               }}
+              style={{
+                display: "block",
+                cursor:
+                  tool === "pencil"
+                    ? "url(\"data:image/svg+xml;utf8,\
+          <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'>\
+          <path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z' fill='black' stroke='white' stroke-width='2'/>\
+          <path d='M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.29a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75 1.83-1.83z' fill='black' stroke='white' stroke-width='2'/>\
+          </svg>\") 1 22, auto" :
+                    tool === "eyedropper"
+                      ? "url(\"data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>\
+<path d='M19.35 7.04l-2.39-2.39c-.39-.39-1.02-.39-1.41 0L14.34 6.46l2.12 2.12-9.19 9.19L5 19l1.23-2.27 9.19-9.19 2.12 2.12 1.21-1.21c.39-.39.39-1.02 0-1.41z' fill='black' stroke='white' stroke-width='2'/>\
+</svg>\") 4 15, auto" :
+                      tool === "select" ? "cell" :
+                        "default",
+              }}
             />
+
+
+            {isDragging && (
+              <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center text-blue-700 font-semibold text-lg pointer-events-none">
+                Drop file to open
+              </div>
+            )}
           </div>
+
         </section>
 
         {/* Sidebar direita */}
@@ -704,6 +1014,7 @@ export default function Page() {
                 <option value="2bpp_planar">2bpp planar</option>
                 <option value="4bpp_planar">4bpp planar</option>
                 <option value="2bpp_planar_composite">2bpp planar composite</option>
+                <option value="4bpp_chunky_zip16">4bpp chunky (zip16)</option>
               </select>
             </div>
 
@@ -817,7 +1128,7 @@ export default function Page() {
             setPalette={setPalette}
             setCurrentColor={setCurrentColor}
           />
-          
+
           {/* Help */}
           <details>
             <summary className="cursor-pointer select-none text-sm font-semibold mb-2">Help</summary>
@@ -831,12 +1142,13 @@ export default function Page() {
           </details>
         </aside>
       </div>
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 backdrop-blur px-0 py-0">
-      <StatusBar
-        tileOffsetHex={hoverInfo.tileOffsetHex}
-        pixelOffsetHex={hoverInfo.pixelOffsetHex}
-      />
-    </div>     
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-white/90 backdrop-blur px-0 py-0">
+        <StatusBar
+          tileOffsetHex={hoverInfo.tileOffsetHex}
+          pixelOffsetHex={hoverInfo.pixelOffsetHex}
+          selectionSize={selection ? `${selection.w}×${selection.h}` : null}
+        />
+      </div>
     </main>
   );
 }

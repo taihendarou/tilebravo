@@ -17,3 +17,42 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* barras visíveis e com espaço reservado */
+.scroll-area {
+  scrollbar-gutter: stable;
+  /* reserva espaço mesmo sem overflow */
+}
+
+/* WebKit (Chrome/Edge/Safari) */
+.scroll-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scroll-area::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  /* slate-300 */
+  border-radius: 8px;
+}
+
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  /* slate-400 */
+}
+
+.scroll-area::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  /* slate-100 */
+}
+
+/* use esta só no container externo (section) */
+.scroll-stable {
+  scrollbar-gutter: stable;
+}
+
+/* use esta no viewport interno: rola apenas quando precisa */
+.scroll-auto {
+  /* sem gutter estável aqui */
+  overflow: auto;
+}

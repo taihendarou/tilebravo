@@ -1,7 +1,7 @@
 // src/components/Toolbox.tsx
-import { MousePointer, Pencil, Pipette, ZoomIn, ZoomOut } from "lucide-react";
+import { MousePointer, Pencil, Pipette, ZoomIn, ZoomOut, Slash, PaintBucket } from "lucide-react";
 
-type ToolId = "select" | "pencil" | "eyedropper";
+type ToolId = "select" | "pencil" | "eyedropper" | "line" | "bucket";
 
 interface Props {
   tool: ToolId;
@@ -21,11 +21,22 @@ export default function Toolbox({
   currentColor,
 }: Props) {
   const btn = (active: boolean) =>
-    `w-10 h-10 border rounded flex items-center justify-center ${active ? "bg-gray-200" : "bg-white hover:bg-gray-100"
-    }`;
+    `w-10 h-10 border border-border rounded flex items-center justify-center ${active ? "bg-muted" : "bg-surface hover:bg-muted"}`;
+
+  const currentHex = palette[currentColor] ?? "#000000";
+  const textOn = (() => {
+    // Compute relative luminance to pick black/white text
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(currentHex);
+    const hex = m ? m[1] : "000000";
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b; // 0..255
+    return luminance > 140 ? "#000000" : "#FFFFFF";
+  })();
 
   return (
-    <aside className="border-r p-2 flex flex-col items-center gap-2">
+    <aside className="border-r border-border p-2 flex flex-col items-center gap-2 bg-background text-foreground">
       <button
         onClick={() => onSelectTool("select")}
         className={btn(tool === "select")}
@@ -45,17 +56,26 @@ export default function Toolbox({
       </button>
 
       <button
-        onClick={() => onSelectTool("eyedropper")}
-        className={btn(tool === "eyedropper")}
-        title="Eyedropper (I)"
-        aria-label="Eyedropper"
+        onClick={() => onSelectTool("line")}
+        className={btn(tool === "line")}
+        title="Line (L)"
+        aria-label="Line"
       >
-        <Pipette size={18} />
+        <Slash size={18} />
+      </button>
+
+      <button
+        onClick={() => onSelectTool("bucket")}
+        className={btn(tool === "bucket")}
+        title="Paint Bucket (G)"
+        aria-label="Paint Bucket"
+      >
+        <PaintBucket size={18} />
       </button>
 
       <button
         onClick={onZoomIn}
-        className="w-10 h-10 border rounded flex items-center justify-center bg-white hover:bg-gray-100"
+        className="w-10 h-10 border border-border rounded flex items-center justify-center bg-surface hover:bg-muted"
         title="Zoom in (+ / =)"
         aria-label="Zoom in"
       >
@@ -64,20 +84,31 @@ export default function Toolbox({
 
       <button
         onClick={onZoomOut}
-        className="w-10 h-10 border rounded flex items-center justify-center bg-white hover:bg-gray-100"
+        className="w-10 h-10 border border-border rounded flex items-center justify-center bg-surface hover:bg-muted"
         title="Zoom out (-)"
         aria-label="Zoom out"
       >
         <ZoomOut size={18} />
       </button>
 
-      {/* Current color preview */}
+      <button
+        onClick={() => onSelectTool("eyedropper")}
+        className={btn(tool === "eyedropper")}
+        title="Eyedropper (I)"
+        aria-label="Eyedropper"
+      >
+        <Pipette size={18} />
+      </button>
+
+      {/* Current color preview with index */}
       <div
-        className="w-10 h-10 border rounded"
-        title={`Current color: ${palette[currentColor] ?? "N/A"}`}
-        style={{ backgroundColor: palette[currentColor] ?? "#000" }}
+        className="w-10 h-10 border border-border rounded flex items-center justify-center"
+        title={`Current color: ${currentHex}`}
+        style={{ backgroundColor: currentHex, color: textOn }}
         aria-label="Current color preview"
-      />
+      >
+        <span className="text-[10px] leading-none font-medium select-none">{currentColor}</span>
+      </div>
     </aside>
   );
 }

@@ -1,27 +1,149 @@
 @import "tailwindcss";
 
+/* Default: dark theme */
 :root {
+  color-scheme: dark;
+  --background: #0b1120;
+  /* slate/sky-950 vibe */
+  --foreground: #e5e7eb;
+  /* gray-200 */
+  --surface: #0f172a;
+  /* slate-900 */
+  --muted: #111827;
+  /* gray-900 */
+  --border: #334155;
+  /* slate-600 */
+  --border-strong: #94a3b8;
+  /* slate-400 */
+  --primary: #2563eb;
+  /* blue-600 */
+  --primary-foreground: #ffffff;
+  --danger: #ef4444;
+  /* red-500 */
+  --danger-foreground: #ffffff;
+
+  /* Scrollbar */
+  --scrollbar-track: #0f172a;
+  /* slate-900 */
+  --scrollbar-thumb: #475569;
+  /* slate-600 */
+  --scrollbar-thumb-hover: #64748b;
+  /* slate-500 */
+
+  /* Typography */
+  --text-base: 14px;
+}
+
+/* Explicit theme hooks (for future toggles) */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0b1120;
+  --foreground: #e5e7eb;
+  --surface: #0f172a;
+  --muted: #111827;
+  --border: #334155;
+  --border-strong: #94a3b8;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --danger: #ef4444;
+  --danger-foreground: #ffffff;
+  --text-base: 14px;
+
+  --scrollbar-track: #0f172a;
+  /* slate-900 */
+  --scrollbar-thumb: #475569;
+  /* slate-600 */
+  --scrollbar-thumb-hover: #64748b;
+  /* slate-500 */
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #171717;
+  --surface: #ffffff;
+  --muted: #f3f4f6;
+  /* gray-100 */
+  --border: #d1d5db;
+  /* gray-300 */
+  --border-strong: #111827;
+  /* gray-900 */
+  --primary: #2563eb;
+  /* blue-600 */
+  --primary-foreground: #ffffff;
+  --danger: #dc2626;
+  /* red-600 */
+  --danger-foreground: #ffffff;
+  --text-base: 14px;
+
+  --scrollbar-track: #f1f5f9;
+  /* slate-100 */
+  --scrollbar-thumb: #cbd5e1;
+  /* slate-300 */
+  --scrollbar-thumb-hover: #94a3b8;
+  /* slate-400 */
+}
+
+/* Navy theme: dark with deep blue/navy hues */
+:root[data-theme="navy"] {
+  color-scheme: dark;
+  --background: #071122;
+  /* deep navy */
+  --foreground: #e6edf3;
+  /* soft light blue-ish */
+  --surface: #0b1a34;
+  /* elevated surface */
+  --muted: #193562;
+  /* muted panels */
+  --border: #1f3b6b;
+  /* navy border */
+  --border-strong: #5b85c1;
+  /* accent border */
+  --primary: #3b82f6;
+  /* blue-500 */
+  --primary-foreground: #ffffff;
+  --danger: #ef4444;
+  /* consistent danger */
+  --danger-foreground: #ffffff;
+  --text-base: 14px;
+
+  /* Scrollbar tuned for navy */
+  --scrollbar-track: #0b1a34;
+  --scrollbar-thumb: #27406f;
+  --scrollbar-thumb-hover: #355491;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* expose a few text sizes so utilities map to theme, not magic numbers */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  font-size: var(--text-base);
 }
 
 /* barras visíveis e com espaço reservado */
 .scroll-area {
   scrollbar-gutter: stable;
   /* reserva espaço mesmo sem overflow */
+  /* Firefox: thumb track colors */
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 /* WebKit (Chrome/Edge/Safari) */
@@ -31,19 +153,24 @@ body {
 }
 
 .scroll-area::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  /* slate-300 */
+  background: var(--scrollbar-thumb);
+  /* themed */
   border-radius: 8px;
 }
 
 .scroll-area::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-  /* slate-400 */
+  background: var(--scrollbar-thumb-hover);
+  /* themed */
 }
 
 .scroll-area::-webkit-scrollbar-track {
-  background: #f1f5f9;
-  /* slate-100 */
+  background: var(--scrollbar-track);
+  /* themed */
+}
+
+/* Corner where horizontal and vertical scrollbars meet */
+.scroll-area::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }
 
 /* use esta só no container externo (section) */

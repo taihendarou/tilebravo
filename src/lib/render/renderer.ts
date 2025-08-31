@@ -14,7 +14,8 @@ export function drawTiles(
   tiles: Uint8Array[],
   palette: string[],
   tilesPerRow: number,
-  pixelSize: number
+  pixelSize: number,
+  columnShift: number = 0
 ): { width: number; height: number; rows: number } {
   const totalTiles = tiles.length;
   const rows = Math.max(1, Math.ceil(totalTiles / Math.max(1, tilesPerRow)));
@@ -22,9 +23,9 @@ export function drawTiles(
   const width = tilesPerRow * TILE_W * pixelSize;
   const height = rows * TILE_H * pixelSize;
 
-  // Ajusta tamanho e limpa
-  ctx.canvas.width = width;
-  ctx.canvas.height = height;
+  // Ajusta tamanho e limpa (evita resize desnecessário)
+  if (ctx.canvas.width !== width) ctx.canvas.width = width;
+  if (ctx.canvas.height !== height) ctx.canvas.height = height;
   ctx.clearRect(0, 0, width, height);
 
   // Pixels
@@ -32,18 +33,32 @@ export function drawTiles(
     const tile = tiles[i];
     const tileX = i % tilesPerRow;
     const tileY = Math.floor(i / tilesPerRow);
+    const visX = ((tileX - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
 
     for (let py = 0; py < TILE_H; py++) {
+      let runColor = -1;
+      let runStart = 0;
       for (let px = 0; px < TILE_W; px++) {
-        const val = tile[py * TILE_W + px]; // 0..3
-        ctx.fillStyle = palette[val] || "#FF00FF";
-        ctx.fillRect(
-          (tileX * TILE_W + px) * pixelSize,
-          (tileY * TILE_H + py) * pixelSize,
-          pixelSize,
-          pixelSize
-        );
+        const val = tile[py * TILE_W + px] | 0;
+        if (px === 0) { runColor = val; runStart = 0; continue; }
+        if (val !== runColor) {
+          // desenha run anterior
+          ctx.fillStyle = palette[runColor] || "#FF00FF";
+          const rx = (visX * TILE_W + runStart) * pixelSize;
+          const ry = (tileY * TILE_H + py) * pixelSize;
+          const rw = (px - runStart) * pixelSize;
+          ctx.fillRect(rx, ry, rw, pixelSize);
+          // inicia novo run
+          runColor = val;
+          runStart = px;
+        }
       }
+      // flush último run até final da linha
+      ctx.fillStyle = palette[runColor] || "#FF00FF";
+      const rx = (visX * TILE_W + runStart) * pixelSize;
+      const ry = (tileY * TILE_H + py) * pixelSize;
+      const rw = (TILE_W - runStart) * pixelSize;
+      ctx.fillRect(rx, ry, rw, pixelSize);
     }
   }
 
@@ -75,22 +90,21 @@ export function drawTiles(
         ctx.strokeStyle = color;
         ctx.lineWidth = lw;
         ctx.setLineDash([]);
+        // desenha todas as linhas em um único path para reduzir chamadas
+        ctx.beginPath();
         // horizontais
         for (let y = 0; y <= rows; y++) {
           const ypx = y * TILE_H * pixelSize;
-          ctx.beginPath();
           ctx.moveTo(0, ypx);
           ctx.lineTo(canvasW, ypx);
-          ctx.stroke();
         }
         // verticais
         for (let x = 0; x <= tilesPerRow; x++) {
           const xpx = x * TILE_W * pixelSize;
-          ctx.beginPath();
           ctx.moveTo(xpx, 0);
           ctx.lineTo(xpx, canvasH);
-          ctx.stroke();
         }
+        ctx.stroke();
       };
 
       // Passe 1 preto
@@ -104,24 +118,20 @@ export function drawTiles(
 
       const drawPass = (stroke: string) => {
         ctx.strokeStyle = stroke;
-
+        ctx.beginPath();
         // horizontais
         for (let y = 0; y <= canvasH; y += pixelSize) {
           const ypx = Math.round(y) + 0.5;
-          ctx.beginPath();
           ctx.moveTo(0, ypx);
           ctx.lineTo(canvasW, ypx);
-          ctx.stroke();
         }
-
         // verticais
         for (let x = 0; x <= canvasW; x += pixelSize) {
           const xpx = Math.round(x) + 0.5;
-          ctx.beginPath();
           ctx.moveTo(xpx, 0);
           ctx.lineTo(xpx, canvasH);
-          ctx.stroke();
         }
+        ctx.stroke();
       };
 
       // 1ª passada (preto suave)
@@ -182,10 +192,12 @@ export function renderCanvas(
     palette: string[];
     tilesPerRow: number;
     pixelSize: number;
+    columnShift?: number;
     showTileGrid?: boolean;
     showPixelGrid?: boolean;
     selection?: SelectionRect | null;
     selectionPreview?: { dx: number; dy: number } | null; // em tiles
+    linePreview?: { ax1: number; ay1: number; ax2: number; ay2: number; colorIndex: number } | null; // em pixels absolutos
   }
 ): void {
   const { rows } = drawTiles(
@@ -193,7 +205,8 @@ export function renderCanvas(
     params.tiles,
     params.palette,
     Math.max(1, params.tilesPerRow),
-    Math.max(1, params.pixelSize)
+    Math.max(1, params.pixelSize),
+    params.columnShift ?? 0
   );
 
   // Grids (independentes)
@@ -248,6 +261,38 @@ export function renderCanvas(
           }
         }
       }
+    }
+
+    ctx.restore();
+  }
+
+  // Preview de linha (Bresenham) em alpha alto
+  if (params.linePreview) {
+    const { ax1, ay1, ax2, ay2, colorIndex } = params.linePreview;
+    const color = params.palette[colorIndex] || "#FF00FF";
+    const ps = Math.max(1, params.pixelSize);
+    const maxAX = params.tilesPerRow * TILE_W - 1;
+
+    ctx.save();
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = color;
+
+    let x1 = Math.max(0, Math.min(ax1, maxAX));
+    let y1 = Math.max(0, Math.min(ay1, (ctx.canvas.height / ps) - 1));
+    const x2 = Math.max(0, Math.min(ax2, maxAX));
+    const y2 = Math.max(0, Math.min(ay2, (ctx.canvas.height / ps) - 1));
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const sx = x1 < x2 ? 1 : -1;
+    const sy = y1 < y2 ? 1 : -1;
+    let err = dx - dy;
+
+    for (;;) {
+      ctx.fillRect(x1 * ps, y1 * ps, ps, ps);
+      if (x1 === x2 && y1 === y2) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x1 += sx; }
+      if (e2 < dx) { err += dx; y1 += sy; }
     }
 
     ctx.restore();

@@ -57,22 +57,21 @@ export default function RightSidebar(props: Props) {
   const navDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const palDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const [gotoValue, setGotoValue] = React.useState("0x0");
+  const { setGoToOpener } = props;
 
   // Expose opener for Cmd/Ctrl+G: focus the inline input
   React.useEffect(() => {
-    if (props.setGoToOpener) {
-      props.setGoToOpener(() => {
+    if (setGoToOpener) {
+      setGoToOpener(() => {
         if (navDetailsRef.current) navDetailsRef.current.open = true;
         gotoInputRef.current?.focus();
         gotoInputRef.current?.select();
       });
     }
-  }, [props.setGoToOpener]);
+  }, [setGoToOpener]);
   const {
     codec,
     setCodec,
-    baseOffsetHex,
-    setBaseOffsetHex,
     tileStrideBytes,
     setTileStrideBytes,
     tilesPerRow,
@@ -416,7 +415,7 @@ export default function RightSidebar(props: Props) {
                   const txt = await f.text();
                   const data = JSON.parse(txt);
                   props.onImportPalette?.(data);
-                } catch (err) {
+                } catch {
                   alert("Failed to import palette. Make sure it's TileBravo JSON format: { name: string, colors: string[] }.");
                 } finally {
                   if (importInputRef.current) importInputRef.current.value = "";

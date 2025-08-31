@@ -26,7 +26,7 @@ function decodeWithStride(
   const codec = CODECS[codecId];
   const end = bytes.length;
   const step = Math.max(codec.bytesPerTile, stride | 0);
-  let base = Math.max(0, baseOffset | 0);
+  const base = Math.max(0, baseOffset | 0);
 
   // calcula quantidade de tiles para alocar de uma vez
   let count = 0; let p = base;
@@ -55,4 +55,3 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
   // @ts-ignore - postMessage on WorkerGlobalScope
   self.postMessage(msg, [pixels.buffer]);
 };
-

@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 // Components
 import StatusBar from "../components/StatusBar";
@@ -85,7 +85,10 @@ export default function Page() {
   // Paletas (múltiplas) e edição
   const [palettes, setPalettes] = useState<PaletteDef[]>([]);
   const [currentPaletteIndex, setCurrentPaletteIndex] = useState<number>(0);
-  const palette: string[] = palettes[currentPaletteIndex]?.colors ?? [];
+  const palette: string[] = useMemo(
+    () => palettes[currentPaletteIndex]?.colors ?? [],
+    [palettes, currentPaletteIndex]
+  );
 
   const [currentColor, setCurrentColor] = useState<number>(0); // índice 0..3
 
@@ -163,7 +166,6 @@ export default function Page() {
       setRawBytes(blank);
       setFileName("untitled.bin");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawBytes, codec]);
 
   // mantém currentColor dentro do range caso a paleta mude
@@ -205,7 +207,7 @@ export default function Page() {
       ctx.canvas.height = viewportTilesY * TILE_H * pixelSize;
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     }
-  }, [tiles, palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, selection, linePreviewEnd, tool, columnShift]);
+  }, [tiles, palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, selection, linePreviewEnd, tool, columnShift, currentColor]);
 
   // Re-decode ao mudar arquivo ou parâmetros
   useEffect(() => {
@@ -215,7 +217,6 @@ export default function Page() {
       return;
     }
     reDecode();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawBytes, codec]);
 
   // Helpers de paleta
@@ -316,7 +317,6 @@ export default function Page() {
     } catch {
       // noop
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codec]);
 
   // atalhos. Cmd/Ctrl+C/V já existem abaixo. Aqui 1..4 e B, V, I.
@@ -324,7 +324,7 @@ export default function Page() {
     function onKeyDown(e: KeyboardEvent) {
       // não capturar quando o foco estiver em inputs
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || (t as any).isContentEditable)) {
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
         return;
       }
 
@@ -368,7 +368,6 @@ export default function Page() {
         const copied: Uint8Array[] = [];
         for (let ty = 0; ty < h; ty++) {
           for (let tx = 0; tx < w; tx++) {
-            const srcIndex = y * tilesPerRow + x + ty * tilesPerRow + tx - y * tilesPerRow;
             const idx = (y + ty) * tilesPerRow + (x + tx);
             if (idx >= 0 && idx < tiles.length) {
               copied.push(new Uint8Array(tiles[idx]));
@@ -1054,7 +1053,7 @@ export default function Page() {
       // importante: blob URL não precisa de CORS, mas vamos cobrir onload/onerror
       const loaded = new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = (e) => reject(new Error("Failed to load image"));
+        img.onerror = (_e) => reject(new Error("Failed to load image"));
       });
       img.src = url;
       // alguns browsers falham no decode(); preferimos onload robusto
@@ -1239,7 +1238,9 @@ export default function Page() {
       if (prev.length === 0) return prev;
       const idx = Math.max(0, Math.min(prev.length - 1, currentPaletteIndex));
       const cur = prev[idx];
-      const nextColors = typeof updater === "function" ? (updater as any)(cur.colors) : updater;
+      const nextColors = typeof updater === "function"
+        ? (updater as (prev: string[]) => string[])(cur.colors)
+        : updater;
       const out = prev.slice();
       out[idx] = { ...cur, colors: nextColors };
       return out;

@@ -1,4 +1,4 @@
-// src/lib/codecs/codec-nes-2bpp.ts
+// src/lib/codecs/codec-2bpp-planar-composite.ts
 import { TILE_W, TILE_H } from "../constants";
 import type { TileCodec } from "../types";
 

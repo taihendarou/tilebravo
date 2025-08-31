@@ -1,5 +1,23 @@
 import { TILE_W, TILE_H } from "../constants";
 
+function drawEmptyMarker(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, pixelSize: number) {
+  ctx.save();
+  const cx = x0 + w / 2;
+  const cy = y0 + h / 2;
+  const size = Math.max(6, Math.min(w, h) * 0.35); // pequeno e proporcional
+  const half = size / 2;
+  ctx.strokeStyle = "rgba(220, 60, 60, 0.55)"; // sutil, indica não editável
+  ctx.lineWidth = Math.max(1, Math.floor(pixelSize));
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx - half, cy - half);
+  ctx.lineTo(cx + half, cy + half);
+  ctx.moveTo(cx + half, cy - half);
+  ctx.lineTo(cx - half, cy + half);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** Retângulo de seleção em unidades de TILE (não pixels). */
 export type SelectionRect = { x: number; y: number; w: number; h: number };
 
@@ -15,7 +33,9 @@ export function drawTiles(
   palette: string[],
   tilesPerRow: number,
   pixelSize: number,
-  columnShift: number = 0
+  columnShift: number = 0,
+  overlayTiles?: Map<number, Uint8Array>,
+  emptyTiles?: Set<number>
 ): { width: number; height: number; rows: number } {
   const totalTiles = tiles.length;
   const rows = Math.max(1, Math.ceil(totalTiles / Math.max(1, tilesPerRow)));
@@ -30,7 +50,7 @@ export function drawTiles(
 
   // Pixels
   for (let i = 0; i < totalTiles; i++) {
-    const tile = tiles[i];
+    const tile = overlayTiles?.get(i) || tiles[i];
     const tileX = i % tilesPerRow;
     const tileY = Math.floor(i / tilesPerRow);
     const visX = ((tileX - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
@@ -60,6 +80,14 @@ export function drawTiles(
       const rw = (TILE_W - runStart) * pixelSize;
       ctx.fillRect(rx, ry, rw, pixelSize);
     }
+    // Empty data overlay marker (sutil X central)
+    if (emptyTiles && emptyTiles.has(i)) {
+      const x0 = visX * TILE_W * pixelSize;
+      const y0 = tileY * TILE_H * pixelSize;
+      const w = TILE_W * pixelSize;
+      const h = TILE_H * pixelSize;
+      drawEmptyMarker(ctx, x0, y0, w, h, pixelSize);
+    }
   }
 
   return { width, height, rows };
@@ -79,7 +107,9 @@ export function drawTilesRegion(
   ax: number,
   ay: number,
   aw: number,
-  ah: number
+  ah: number,
+  overlayTiles?: Map<number, Uint8Array>,
+  emptyTiles?: Set<number>
 ): void {
   const totalTiles = tiles.length;
   if (totalTiles === 0 || aw <= 0 || ah <= 0) return;
@@ -110,7 +140,7 @@ export function drawTilesRegion(
     for (let tx = minTX; tx <= maxTX; tx++) {
       const i = ty * tilesPerRow + tx;
       if (i < 0 || i >= totalTiles) continue;
-      const tile = tiles[i];
+      const tile = overlayTiles?.get(i) || tiles[i];
       if (!tile) continue;
 
       // posição visual considerando columnShift
@@ -134,25 +164,34 @@ export function drawTilesRegion(
         // run-length dentro da janela pxStart..pxEnd
         let runColor = -1;
         let runBeg = pxStart;
-        for (let px = pxStart; px < pxEnd; px++) {
-          const val = tile[py * TILE_W + px] | 0;
-          if (px === pxStart) { runColor = val; runBeg = pxStart; continue; }
-          if (val !== runColor) {
-            ctx.fillStyle = palette[runColor] || "#FF00FF";
-            const rx = (tileAx + runBeg) * pixelSize;
-            const ry = (tileAy + py) * pixelSize;
-            const rw = (px - runBeg) * pixelSize;
-            ctx.fillRect(rx, ry, rw, pixelSize);
-            runColor = val;
-            runBeg = px;
-          }
+      for (let px = pxStart; px < pxEnd; px++) {
+        const val = tile[py * TILE_W + px] | 0;
+        if (px === pxStart) { runColor = val; runBeg = pxStart; continue; }
+        if (val !== runColor) {
+          ctx.fillStyle = palette[runColor] || "#FF00FF";
+          const rx = (tileAx + runBeg) * pixelSize;
+          const ry = (tileAy + py) * pixelSize;
+          const rw = (px - runBeg) * pixelSize;
+          ctx.fillRect(rx, ry, rw, pixelSize);
+          runColor = val;
+          runBeg = px;
         }
-        // flush último run
-        ctx.fillStyle = palette[runColor] || "#FF00FF";
-        const rx = (tileAx + runBeg) * pixelSize;
-        const ry = (tileAy + py) * pixelSize;
-        const rw = (pxEnd - runBeg) * pixelSize;
-        ctx.fillRect(rx, ry, rw, pixelSize);
+      }
+      // flush último run
+      ctx.fillStyle = palette[runColor] || "#FF00FF";
+      const rx = (tileAx + runBeg) * pixelSize;
+      const ry = (tileAy + py) * pixelSize;
+      const rw = (pxEnd - runBeg) * pixelSize;
+      ctx.fillRect(rx, ry, rw, pixelSize);
+      }
+      // Empty overlay marker (sutil X central) se aplicável
+      const iLocal = ty * tilesPerRow + tx;
+      if (emptyTiles && emptyTiles.has(iLocal)) {
+        const x0 = tileAx * pixelSize;
+        const y0 = tileAy * pixelSize;
+        const w = TILE_W * pixelSize;
+        const h = TILE_H * pixelSize;
+        drawEmptyMarker(ctx, x0, y0, w, h, pixelSize);
       }
     }
   }
@@ -293,6 +332,8 @@ export function renderCanvas(
     selection?: SelectionRect | null;
     selectionPreview?: { dx: number; dy: number } | null; // em tiles
     linePreview?: { ax1: number; ay1: number; ax2: number; ay2: number; colorIndex: number } | null; // em pixels absolutos
+    overlayTiles?: Map<number, Uint8Array> | null;
+    emptyTiles?: Set<number> | null;
   }
 ): void {
   const { rows } = drawTiles(
@@ -301,7 +342,9 @@ export function renderCanvas(
     params.palette,
     Math.max(1, params.tilesPerRow),
     Math.max(1, params.pixelSize),
-    params.columnShift ?? 0
+    params.columnShift ?? 0,
+    params.overlayTiles ?? undefined,
+    params.emptyTiles ?? undefined
   );
 
   // Grids (independentes)
@@ -421,6 +464,8 @@ export function renderCanvasRegion(
     selection?: SelectionRect | null;
     selectionPreview?: { dx: number; dy: number } | null;
     linePreview?: { ax1: number; ay1: number; ax2: number; ay2: number; colorIndex: number } | null;
+    overlayTiles?: Map<number, Uint8Array> | null;
+    emptyTiles?: Set<number> | null;
   },
   rect: { ax: number; ay: number; aw: number; ah: number }
 ): void {
@@ -450,7 +495,9 @@ export function renderCanvasRegion(
     rect.ax,
     rect.ay,
     rect.aw,
-    rect.ah
+    rect.ah,
+    params.overlayTiles ?? undefined,
+    params.emptyTiles ?? undefined
   );
 
   // Grids dentro do recorte

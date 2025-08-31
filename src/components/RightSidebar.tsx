@@ -4,7 +4,7 @@ import React, { useRef } from "react";
 import PalettePanel from "./PalettePanel";
 import { CODECS } from "../lib/codecs";
 import type { CodecId } from "../lib/codecs";
-import { ChevronLeft, ChevronRight, Download, Plus, Copy, Upload, Trash, RotateCcw, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Plus, Copy, Upload, Trash, RotateCcw, ChevronDown, GripVertical } from "lucide-react";
 
 interface Props {
   codec: CodecId;
@@ -63,7 +63,10 @@ export default function RightSidebar(props: Props) {
   React.useEffect(() => {
     if (setGoToOpener) {
       setGoToOpener(() => {
-        if (navDetailsRef.current) navDetailsRef.current.open = true;
+        if (navDetailsRef.current) {
+          navDetailsRef.current.open = true;
+          persistOpenState();
+        }
         gotoInputRef.current?.focus();
         gotoInputRef.current?.select();
       });
@@ -153,11 +156,12 @@ export default function RightSidebar(props: Props) {
 
   const smallBtn = "h-8 px-2 border border-border rounded bg-surface hover:bg-muted inline-flex items-center justify-center";
   const inputBase = "border border-border rounded bg-surface text-foreground px-2 py-1";
+  
+  // Minimal toggle only (no DnD, no persistence)
 
-  return (
-    <aside className="border-l border-border p-3 pb-10 overflow-y-auto scroll-area bg-background text-foreground space-y-4">
-      {/* Document */}
-      <details ref={docDetailsRef} open className="rounded-lg border border-border bg-background shadow-sm group">
+  function renderDocument() {
+    return (
+      <details ref={docDetailsRef} open className="group rounded-lg border border-border bg-background shadow-sm">
         <summary className="px-3 py-2 cursor-pointer select-none flex items-center justify-between">
           <h3 className="text-base font-semibold">Document</h3>
           <ChevronDown size={16} className="opacity-70 transition-transform group-open:rotate-180" />
@@ -223,9 +227,12 @@ export default function RightSidebar(props: Props) {
           </div>
         </div>
       </details>
+    );
+  }
 
-      {/* Navigation */}
-      <details ref={navDetailsRef} open className="rounded-lg border border-border bg-background shadow-sm group">
+  function renderNavigation() {
+    return (
+      <details ref={navDetailsRef} open className="group rounded-lg border border-border bg-background shadow-sm">
         <summary className="px-3 py-2 cursor-pointer select-none flex items-center justify-between">
           <h3 className="text-base font-semibold">Navigation</h3>
           <ChevronDown size={16} className="opacity-70 transition-transform group-open:rotate-180" />
@@ -334,9 +341,12 @@ export default function RightSidebar(props: Props) {
           </div>
         </div>
       </details>
+    );
+  }
 
-      {/* Palette */}
-      <details ref={palDetailsRef} open className="rounded-lg border border-border bg-background shadow-sm group">
+  function renderPalette() {
+    return (
+      <details ref={palDetailsRef} open className="group rounded-lg border border-border bg-background shadow-sm">
         <summary className="px-3 py-2 cursor-pointer select-none flex items-center justify-between">
           <h3 className="text-base font-semibold">Palette</h3>
           <ChevronDown size={16} className="opacity-70 transition-transform group-open:rotate-180" />
@@ -436,8 +446,14 @@ export default function RightSidebar(props: Props) {
           <div className="text-xs opacity-70">Click to select. Double-click to edit color.</div>
         </div>
       </details>
+    );
+  }
 
-      
+  return (
+    <aside className="border-l border-border p-3 pb-10 overflow-y-auto scroll-area bg-background text-foreground space-y-4">
+      {renderDocument()}
+      {renderNavigation()}
+      {renderPalette()}
     </aside>
   );
 }

@@ -1,59 +1,55 @@
-# TileBravo
+# TileBravo (Beta)
 
-**Version 0.9**
+Version: v0.3.0-beta.1
 
-TileBravo is a modern **8x8 tile editor** created for ROM hackers.  
-It is a powerful alternative to the classic **Tile Molester**, offering support for multiple codecs, dynamic palettes, advanced editing tools, and direct export to BIN files.
+TileBravo is a tile editor created for ROM hacking and translation of classic tile‑based games — an alternative/complement to editors like Tile Molester and YY‑CHR.
 
-## Public Access
+## Public Version
 
-- Public version: [https://tilebravo.vercel.app/](https://tilebravo.vercel.app/)  
-- Last deploy: always available at the same link.
+- Live: https://tilebravo.hextinkers.org/
+- GitHub: https://github.com/taihendarou/tilebravo
 
-## Features
+## Usage (quick tour)
 
-- Plug-in **codecs** (2bpp, 4bpp, and more in development).  
-- **Dynamic palette editor** with direct color picking.  
-- Editing tools: **selection, pencil, eyedropper**.  
-- **Copy & paste** support for tiles.  
-- Adjustable **zoom** and **tile/pixel grid overlays**.  
-- **BIN export** and planned PNG export.  
-- “Dirty state” indicator to track unsaved changes.  
+- Open a ROM/asset file, pick a codec/stride and start exploring tiles.
+- Use selection/pencil/line/bucket to edit; copy/paste regions.
+- Manage palettes (new, duplicate, import/export).
+- Use the status bar to inspect offsets and change theme.
 
-## Roadmap
+## Last features (v0.3.0-beta.1)
 
-This is the planned roadmap for future versions of TileBravo.
+- Multiple codecs (2bpp planar, 4bpp planar, 2bpp planar composite, 4bpp chunky zip16).
+- Palette editing (create, duplicate, import/export) and color picking.
+- Tools: selection, pencil, eyedropper, line, bucket.
+- Linear tile stepping (view-only), zoom, tile/pixel grid overlays.
+- Import PNG (multiples of 8 px); export BIN; PNG export for previews.
 
-### 1. Export and Import
-- PNG export of selected or full tileset  
-- PNG import (convert image to tiles using active codec and palette)  
-- Palette import from custom files or formats  
-- Standard palette sets for each codec (easily switchable)  
+## Features for next release
 
-### 2. Codecs
-- Add more well-known codecs (NES composite, linear formats, etc.)  
-- Optimize the codec system to make it simpler to create and register new codecs  
+- New codecs
+- Byte stepping (navigate by byte offset)
+- Palette import in additional emulator formats
+- Performance updates
+- New themes
+- Full user and features documentation
+- Undo feature (Ctrl/CMD + Z)
 
-### 3. Editing Features
-- Copy/paste between different tabs  
-- Undo/redo system (Ctrl+Z / Ctrl+Shift+Z)  
-- Line drawing tool (Draw Line)  
+## Credits
 
-### 4. Visualization and Navigation
-- “Go to” function (jump to a specific tile offset)  
-- Hex view mode (inspect tile data directly in hexadecimal)  
-- Visual/UI improvements (themes, configs, credits screen)  
+- Author: Taihen — https://hextinkers.org
+- Stack: Next.js, React, Tailwind, lucide-react
 
-### 5. Polish and Extras
-- Theming support (light/dark/custom)  
-- Configurations for grid, default palettes, and shortcuts  
-- Credits screen for contributors and acknowledgments  
+## How to build (to run on your own)
 
-## Developer
-
-Developed by **Taihen**.  
-Learn more at [https://hextinkers.org](https://hextinkers.org)
+1. Install: `npm install`
+2. Dev: `npm run dev`
+3. Build: `npm run build` then `npm start`
 
 ## License
 
-MIT License.
+MIT — permissive use and redistribution allowed with attribution (retain copyright notice).
+
+## Future Work (TBD)
+
+- Hexadecimal visualization with real-time editing
+- Tilemap editing

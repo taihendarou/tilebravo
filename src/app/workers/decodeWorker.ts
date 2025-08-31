@@ -1,3 +1,6 @@
+/// <reference lib="webworker" />
+export {};
+
 // Worker: decode tiles with stride off the main thread
 import { CODECS } from "../../lib/codecs";
 import { TILE_W, TILE_H } from "../../lib/constants";
@@ -43,4 +46,3 @@ self.onmessage = function (ev: MessageEvent<Req>) {
     (self as any).postMessage({ pixelsBuffer: new ArrayBuffer(0), tilesCount: 0 });
   }
 };
-

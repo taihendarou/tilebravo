@@ -30,7 +30,6 @@ function normRect(a: { x: number; y: number }, b: { x: number; y: number }) {
   const y2 = Math.max(a.y, b.y);
   return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 };
 }
-// removed legacy getTileIndex; use viewTileIndex instead
 
 // Helper: build safe data URL for SVG cursors across browsers
 function svgCursor(svg: string, hx: number, hy: number): string {
@@ -214,6 +213,7 @@ function createBlankFile(tileCount: number, codecId: CodecId): Uint8Array {
 }
 
 export default function Page() {
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<HTMLElement | null>(null);
   const innerViewportRef = useRef<HTMLDivElement | null>(null);
@@ -270,7 +270,7 @@ export default function Page() {
     const base = viewOffset > 0 ? viewOffset : 0;
     const padCount = viewOffset < 0 ? -viewOffset : 0;
     // Determine page slicing (enable immediately when needed to avoid giant first paint)
-    const pageNeeded = (function(){
+    const pageNeeded = (function () {
       const totalTilesLive = tilesRef.current.length;
       const remainingTiles = Math.max(0, totalTilesLive - Math.max(0, viewOffset));
       const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
@@ -356,7 +356,7 @@ export default function Page() {
 
       const base = viewOffset > 0 ? viewOffset : 0;
       const padCount = viewOffset < 0 ? -viewOffset : 0;
-      const pageNeeded2 = (function(){
+      const pageNeeded2 = (function () {
         const totalTilesLive = tilesRef.current.length;
         const remainingTiles = Math.max(0, totalTilesLive - Math.max(0, viewOffset));
         const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
@@ -468,10 +468,15 @@ export default function Page() {
     return Math.max(1, Math.min(allowedByHeight, cap));
   }
   // Loading overlay ao abrir arquivo grande
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const isLoadingRef = useRef(false);
   const loadingMinEndAtRef = useRef<number | null>(null);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoading(false), 500);
+    return () => clearTimeout(t);
+  }, []);
 
 
   // Seleção e clipboard
@@ -861,11 +866,10 @@ export default function Page() {
 
   // Abrir arquivo
   async function handleFile(file: File) {
-    // Se arquivo > 256 bytes, mostra overlay por pelo menos 3s
-    if (file.size > 256) {
-      setIsLoading(true);
-      loadingMinEndAtRef.current = Date.now() + 1500;
-    }
+
+    setIsLoading(true);
+    loadingMinEndAtRef.current = Date.now() + 1000;
+
     const buf = new Uint8Array(await file.arrayBuffer());
     setFileName(file.name);
     setRawBytes(buf);
@@ -1703,6 +1707,8 @@ export default function Page() {
 
   // Limpar
   function clearAll() {
+    setIsLoading(true);
+    loadingMinEndAtRef.current = Date.now() + 1000;
     setFileName("untitled.bin");
     const blank = createBlankFile(16 * 16, codec);
     setRawBytes(blank);
@@ -1849,7 +1855,7 @@ export default function Page() {
   return (
     <main className="w-screen h-screen flex flex-col pb-1 overflow-hidden bg-background text-foreground">
       {isLoading && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center">
+        <div className="fixed inset-0 z-50 bg-background/100 backdrop-blur-sm flex items-center justify-center">
           <div className="flex flex-col items-center gap-3">
             <div className="w-10 h-10 border-4 border-border border-t-primary rounded-full animate-spin" />
             <div className="text-sm opacity-80">Loading…</div>

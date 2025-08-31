@@ -29,10 +29,29 @@ self.onmessage = function (ev: MessageEvent<Req>) {
     const tileSize = TILE_W * TILE_H; // 64
 
     const tiles: Uint8Array[] = [];
+    // Full tiles by stride
     while (base + codecDef.bytesPerTile <= end) {
       const slice = bytes.subarray(base, base + codecDef.bytesPerTile);
       tiles.push(codecDef.decodeTile(slice));
       base += step;
+    }
+    // Remainder tile padded
+    if (base < end && end - base > 0) {
+      const padded = new Uint8Array(codecDef.bytesPerTile);
+      const cut = bytes.subarray(base, Math.min(end, base + codecDef.bytesPerTile));
+      padded.set(cut, 0);
+      tiles.push(codecDef.decodeTile(padded));
+    }
+    // Never return empty
+    if (tiles.length === 0) {
+      if (end > 0) {
+        const start = Math.min(Math.max(0, baseOffset | 0), end - 1);
+        const padded = new Uint8Array(codecDef.bytesPerTile);
+        padded.set(bytes.subarray(start, Math.min(end, start + codecDef.bytesPerTile)), 0);
+        tiles.push(codecDef.decodeTile(padded));
+      } else {
+        tiles.push(new Uint8Array(tileSize));
+      }
     }
 
     const out = new Uint8Array(tiles.length * tileSize);

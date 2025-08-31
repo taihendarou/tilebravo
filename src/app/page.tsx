@@ -32,6 +32,28 @@ function normRect(a: { x: number; y: number }, b: { x: number; y: number }) {
 }
 // removed legacy getTileIndex; use viewTileIndex instead
 
+// Helper: build safe data URL for SVG cursors across browsers
+function svgCursor(svg: string, hx: number, hy: number): string {
+  const enc = encodeURIComponent(svg)
+    // Keep commas unescaped for size and readability
+    .replace(/%2C/g, ",")
+    // Some browsers are picky about single quotes in data URLs
+    .replace(/%27/g, "'");
+  return `url("data:image/svg+xml;charset=utf-8,${enc}") ${hx} ${hy}, auto`;
+}
+
+// Canvas dimension guard (per-dimension). Conservative cross-browser value.
+const CANVAS_MAX_DIM = 32760;
+// Conservative pagination: force paging when remaining tiles exceed this
+const PAGING_TILE_THRESHOLD = 2048;
+
+function shouldPageStatic(tilesCount: number, viewOffset: number, tilesPerRow: number, pixelSize: number): boolean {
+  const remainingTiles = Math.max(0, tilesCount - Math.max(0, viewOffset));
+  const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
+  const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
+  return remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
+}
+
 // Helpers de paleta fora do componente (identidade estável)
 function defaultPalettesFor(n: number): PaletteDef[] {
   const makeGrayscale = (k: number): string[] =>
@@ -148,11 +170,34 @@ function decodeWithStride(
   const step = Math.max(codec.bytesPerTile, stride | 0);
   let base = Math.max(0, baseOffset | 0);
 
+  // Decode full tiles by stride
   while (base + codec.bytesPerTile <= end) {
     const slice = bytes.subarray(base, base + codec.bytesPerTile);
     tiles.push(codec.decodeTile(slice));
     base += step;
   }
+
+  // If there is a remainder (not enough bytes for a full tile), pad and decode one more
+  if (base < end && end - base > 0) {
+    const padded = new Uint8Array(codec.bytesPerTile);
+    const cut = bytes.subarray(base, Math.min(end, base + codec.bytesPerTile));
+    padded.set(cut, 0);
+    tiles.push(codec.decodeTile(padded));
+  }
+
+  // Never return empty: if file is too small or baseOffset beyond, still render something
+  if (tiles.length === 0) {
+    if (end > 0) {
+      const start = Math.min(Math.max(0, baseOffset | 0), end - 1);
+      const padded = new Uint8Array(codec.bytesPerTile);
+      padded.set(bytes.subarray(start, Math.min(end, start + codec.bytesPerTile)), 0);
+      tiles.push(codec.decodeTile(padded));
+    } else {
+      // Truly empty input: show one blank tile
+      tiles.push(new Uint8Array(TILE_W * TILE_H));
+    }
+  }
+
   return tiles;
 }
 
@@ -222,31 +267,46 @@ export default function Page() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    if (tilesCount > 0) {
-      const base = viewOffset > 0 ? viewOffset : 0;
-      const padCount = viewOffset < 0 ? -viewOffset : 0;
-      const tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
-      // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
-      const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
-      let tilesToRender = padCount > 0 ? [...Array(padCount)].map(() => blank).concat(tail) : tail;
-      const emptySet = new Set<number>();
-      for (let i = 0; i < padCount; i++) emptySet.add(i);
-      // Tail padding to fill viewport height with hatch at the end
-      const minTiles = Math.max(1, tilesPerRow) * Math.max(1, viewportTilesY);
-      if (tilesToRender.length < minTiles) {
-        const tailPad = minTiles - tilesToRender.length;
-        const start = tilesToRender.length;
-        tilesToRender = tilesToRender.concat([...Array(tailPad)].map(() => blank));
-        for (let i = 0; i < tailPad; i++) emptySet.add(start + i);
+    const base = viewOffset > 0 ? viewOffset : 0;
+    const padCount = viewOffset < 0 ? -viewOffset : 0;
+    // Determine page slicing (enable immediately when needed to avoid giant first paint)
+    const pageNeeded = (function(){
+      const totalTilesLive = tilesRef.current.length;
+      const remainingTiles = Math.max(0, totalTilesLive - Math.max(0, viewOffset));
+      const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
+      const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
+      return pagingEnabled || remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
+    })();
+    let tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
+    if (pageNeeded) {
+      const pageTiles = currentPageTiles();
+      const start = Math.max(0, pageIndex * pageTiles);
+      const end = start + pageTiles;
+      tail = tail.slice(start, end);
+    }
+    // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
+    const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
+    let tilesToRender = padCount > 0 ? [...Array(padCount)].map(() => blank).concat(tail) : tail;
+    const emptySet = new Set<number>();
+    for (let i = 0; i < padCount; i++) emptySet.add(i);
+    // Tail padding to fill viewport height with hatch at the end
+    const minTiles = Math.max(1, tilesPerRow) * Math.max(1, viewportTilesY);
+    if (tilesToRender.length < minTiles) {
+      const tailPad = minTiles - tilesToRender.length;
+      const start = tilesToRender.length;
+      tilesToRender = tilesToRender.concat([...Array(tailPad)].map(() => blank));
+      for (let i = 0; i < tailPad; i++) emptySet.add(start + i);
+    }
+    let overlay: Map<number, Uint8Array> | undefined;
+    if (editBufferRef.current && editBufferRef.current.size > 0) {
+      overlay = new Map();
+      for (const [idx, tile] of editBufferRef.current) {
+        const local = (idx - base) + padCount;
+        if (local >= 0 && local < tilesToRender.length) overlay.set(local, tile);
       }
-      let overlay: Map<number, Uint8Array> | undefined;
-      if (editBufferRef.current && editBufferRef.current.size > 0) {
-        overlay = new Map();
-        for (const [idx, tile] of editBufferRef.current) {
-          const local = (idx - base) + padCount;
-          if (local >= 0 && local < tilesToRender.length) overlay.set(local, tile);
-        }
-      }
+    }
+    try { console.log("redrawNow:", { tilesToRender: tilesToRender.length, tilesPerRow, pixelSize, base, padCount, selection: !!selection, pagingEnabled, pageIndex }); } catch { }
+    try {
       renderCanvas(ctx, {
         tiles: tilesToRender,
         palette,
@@ -266,9 +326,11 @@ export default function Page() {
         overlayTiles: overlay ?? null,
         emptyTiles: emptySet,
       });
-    } else {
-      ctx.canvas.width = viewportTilesX * TILE_W * pixelSize;
-      ctx.canvas.height = viewportTilesY * TILE_H * pixelSize;
+    } catch (err) {
+      try { console.error("renderCanvas failed", err); } catch { }
+      // fallback: clear canvas to known size so at least area shows
+      ctx.canvas.width = Math.max(1, tilesPerRow) * TILE_W * Math.max(1, pixelSize);
+      ctx.canvas.height = Math.max(1, viewportTilesY) * TILE_H * Math.max(1, pixelSize);
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     }
   }
@@ -294,7 +356,20 @@ export default function Page() {
 
       const base = viewOffset > 0 ? viewOffset : 0;
       const padCount = viewOffset < 0 ? -viewOffset : 0;
-      const tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
+      const pageNeeded2 = (function(){
+        const totalTilesLive = tilesRef.current.length;
+        const remainingTiles = Math.max(0, totalTilesLive - Math.max(0, viewOffset));
+        const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
+        const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
+        return pagingEnabled || remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
+      })();
+      let tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
+      if (pageNeeded2) {
+        const pageTiles = currentPageTiles();
+        const start = Math.max(0, pageIndex * pageTiles);
+        const end = start + pageTiles;
+        tail = tail.slice(start, end);
+      }
       // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
       const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
       let tilesToRender = padCount > 0 ? [...Array(padCount)].map(() => blank).concat(tail) : tail;
@@ -376,7 +451,21 @@ export default function Page() {
   // Linear view offset: index of the first visible tile
   const [viewOffset, setViewOffset] = useState<number>(0);
   function viewTileIndex(tx: number, ty: number): number {
-    return viewOffset + ty * Math.max(1, tilesPerRow) + tx;
+    const pageTiles = currentPageTiles();
+    const pageBase = pagingEnabled ? pageIndex * pageTiles : 0;
+    return viewOffset + pageBase + ty * Math.max(1, tilesPerRow) + tx;
+  }
+  // Pagination state: auto-enabled if canvas height would exceed safe limit
+  const [pagingEnabled, setPagingEnabled] = useState<boolean>(false);
+  const [pageIndex, setPageIndex] = useState<number>(0);
+
+  function currentPageTiles(): number {
+    const ps = Math.max(1, pixelSize);
+    const safeRows = Math.max(1, Math.floor(CANVAS_MAX_DIM / (TILE_H * ps)) - 1);
+    const desiredRows = Math.max(1, Math.min(safeRows, Math.max(viewportTilesY, Math.min(4 * viewportTilesY, safeRows))));
+    const allowedByHeight = Math.max(1, tilesPerRow) * desiredRows;
+    const cap = Math.max(1, PAGING_TILE_THRESHOLD);
+    return Math.max(1, Math.min(allowedByHeight, cap));
   }
   // Loading overlay ao abrir arquivo grande
   const [isLoading, setIsLoading] = useState(false);
@@ -398,6 +487,8 @@ export default function Page() {
   // Throttle de seleção: aplica setSelection no máximo 1x por frame
   const selectionRafPendingRef = useRef(false);
   const selectionDraftRef = useRef<Selection>(null);
+  // Track previous selection to mark dirty regions on change
+  const prevSelectionRef = useRef<Selection>(null);
 
   // Status bar
   const [hoverInfo, setHoverInfo] = useState<{
@@ -453,7 +544,39 @@ export default function Page() {
   // Desenho: full redraw on structural/view changes, including viewOffset
   useEffect(() => {
     redrawNow();
-  }, [palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, tilesCount, viewOffset]);
+  }, [palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, tilesCount, viewOffset, pagingEnabled, pageIndex]);
+
+  // Ensure viewOffset stays within [0, tilesCount-1] after decodes/resizes
+  useEffect(() => {
+    setViewOffset((prev) => {
+      const max = Math.max(0, tilesCount - 1);
+      const next = Math.min(Math.max(prev, 0), max);
+      return next === prev ? prev : next;
+    });
+  }, [tilesCount]);
+
+  // Auto-enable pagination when height would exceed safe limits OR tiles > threshold
+  useEffect(() => {
+    const remainingTiles = Math.max(0, tilesCount - Math.max(0, viewOffset));
+    const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
+    const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
+    const shouldPage = (remainingTiles > PAGING_TILE_THRESHOLD) || (heightPx > CANVAS_MAX_DIM);
+    setPagingEnabled(shouldPage);
+    if (!shouldPage) setPageIndex(0);
+  }, [tilesCount, tilesPerRow, pixelSize, viewOffset]);
+
+  // Redraw selection overlay when selection changes (mark old and new areas dirty)
+  useEffect(() => {
+    const prev = prevSelectionRef.current;
+    const curr = selection;
+    if (prev) {
+      markDirtyRect(prev.x * TILE_W, prev.y * TILE_H, prev.w * TILE_W, prev.h * TILE_H);
+    }
+    if (curr) {
+      markDirtyRect(curr.x * TILE_W, curr.y * TILE_H, curr.w * TILE_W, curr.h * TILE_H);
+    }
+    prevSelectionRef.current = selection;
+  }, [selection]);
 
   // Re-decode ao mudar arquivo ou parâmetros
   useEffect(() => {
@@ -471,6 +594,7 @@ export default function Page() {
       const bytesBuffer = rawBytes.buffer.slice(0);
       worker.onmessage = (ev: MessageEvent<{ pixelsBuffer: ArrayBuffer; tilesCount: number }>) => {
         const { pixelsBuffer, tilesCount } = ev.data;
+        try { console.log("decode(effect worker): bytes=", rawBytes.length, "codec=", codec, "stride=", stride, "tiles=", tilesCount); } catch { }
         const pixels = new Uint8Array(pixelsBuffer);
         const tileSize = TILE_W * TILE_H;
         const out: Uint8Array[] = new Array(tilesCount);
@@ -490,12 +614,14 @@ export default function Page() {
       };
       worker.onerror = () => {
         worker.terminate();
+        try { console.log("decode(effect worker error) -> fallback sync"); } catch { }
         const decoded = decodeWithStride(
           rawBytes,
           isNaN(baseOffset) ? 0 : baseOffset,
           stride,
           codec
         );
+        try { console.log("decode(effect sync fallback): bytes=", rawBytes.length, "codec=", codec, "stride=", stride, "tiles=", decoded.length); } catch { }
         tilesRef.current = decoded;
         setTilesCount(decoded.length);
         markFullRedraw();
@@ -514,6 +640,7 @@ export default function Page() {
         stride,
         codec
       );
+      try { console.log("decode(effect sync catch): bytes=", rawBytes.length, "codec=", codec, "stride=", stride, "tiles=", decoded.length); } catch { }
       tilesRef.current = decoded;
       setTilesCount(decoded.length);
       markFullRedraw();
@@ -568,6 +695,10 @@ export default function Page() {
     selection: null as Selection,
     tilesPerRow: 0,
     isViewportFocused: false,
+    viewOffset: 0,
+    pagingEnabled: false,
+    pageIndex: 0,
+    pageTiles: 0,
   });
   useEffect(() => { keyCtxRef.current.paletteLen = palette.length; }, [palette.length]);
   useEffect(() => { keyCtxRef.current.selection = selection; }, [selection]);
@@ -575,6 +706,10 @@ export default function Page() {
   // keep in sync with ref length so copy/paste can use latest
   useEffect(() => { /* tiles live in tilesRef */ }, [tilesCount]);
   useEffect(() => { keyCtxRef.current.isViewportFocused = isViewportFocused; }, [isViewportFocused]);
+  useEffect(() => { keyCtxRef.current.viewOffset = viewOffset; }, [viewOffset]);
+  useEffect(() => { keyCtxRef.current.pagingEnabled = pagingEnabled; }, [pagingEnabled]);
+  useEffect(() => { keyCtxRef.current.pageIndex = pageIndex; }, [pageIndex]);
+  useEffect(() => { keyCtxRef.current.pageTiles = currentPageTiles(); }, [tilesPerRow, pixelSize, viewportTilesY]);
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
@@ -613,7 +748,8 @@ export default function Page() {
         const copied: Uint8Array[] = [];
         for (let ty = 0; ty < h; ty++) {
           for (let tx = 0; tx < w; tx++) {
-            const idx = viewTileIndex(x + tx, y + ty);
+            const base = Math.max(0, ctx.viewOffset) + (ctx.pagingEnabled ? (ctx.pageIndex * Math.max(1, ctx.pageTiles)) : 0);
+            const idx = base + (y + ty) * Math.max(1, ctx.tilesPerRow) + (x + tx);
             if (idx >= 0 && idx < tilesRef.current.length) copied.push(new Uint8Array(tilesRef.current[idx]));
           }
         }
@@ -627,20 +763,23 @@ export default function Page() {
         const clip = clipboardRef.current; if (!clip) return;
         const sel = ctx.selection; const targetX = sel ? sel.x : 0; const targetY = sel ? sel.y : 0;
         {
-          const next = tilesRef.current.slice();
+          // Aplicar via edit buffer para garantir consistência do redraw
+          ensureEditBuffer();
+          const bufMap = editBufferRef.current!;
           for (let ty = 0; ty < clip.h; ty++) {
             for (let tx = 0; tx < clip.w; tx++) {
               const dstX = targetX + tx; const dstY = targetY + ty;
               if (dstX < 0 || dstY < 0) continue;
-              const dstIndex = viewTileIndex(dstX, dstY);
-              if (dstIndex >= 0 && dstIndex < next.length) {
+              const base = Math.max(0, ctx.viewOffset) + (ctx.pagingEnabled ? (ctx.pageIndex * Math.max(1, ctx.pageTiles)) : 0);
+              const dstIndex = base + dstY * Math.max(1, ctx.tilesPerRow) + dstX;
+              if (dstIndex >= 0 && dstIndex < tilesRef.current.length) {
                 const srcIndex = ty * clip.w + tx;
-                next[dstIndex] = new Uint8Array(clip.tiles[srcIndex]);
+                bufMap.set(dstIndex, new Uint8Array(clip.tiles[srcIndex]));
               }
             }
           }
-          tilesRef.current = next;
-          scheduleRedraw();
+          // Commit e redraw (usa caminho já estável do lápis)
+          commitEditBuffer();
           markDirtyRect(targetX * TILE_W, targetY * TILE_H, clip.w * TILE_W, clip.h * TILE_H);
         }
         setIsDirty(true);
@@ -661,6 +800,7 @@ export default function Page() {
       const bytesBuffer = rawBytes.buffer.slice(0); // copia para evitar detachment
       worker.onmessage = (ev: MessageEvent<{ pixelsBuffer: ArrayBuffer; tilesCount: number }>) => {
         const { pixelsBuffer, tilesCount } = ev.data;
+        console.debug("decode(worker): bytes=", rawBytes.length, "codec=", codec, "stride=", stride, "tiles=", tilesCount);
         const pixels = new Uint8Array(pixelsBuffer);
         const tileSize = TILE_W * TILE_H; // 64
         const out: Uint8Array[] = new Array(tilesCount);
@@ -706,6 +846,7 @@ export default function Page() {
         stride,
         codec
       );
+      console.debug("decode(sync): bytes=", rawBytes.length, "codec=", codec, "stride=", stride, "tiles=", decoded.length);
       tilesRef.current = decoded;
       setTilesCount(decoded.length);
       markFullRedraw();
@@ -728,6 +869,9 @@ export default function Page() {
     const buf = new Uint8Array(await file.arrayBuffer());
     setFileName(file.name);
     setRawBytes(buf);
+    // reset viewport when opening a new file
+    setViewOffset(0);
+    setPageIndex(0);
     setSelection(null);
     setIsDirty(false);
   }
@@ -1057,7 +1201,12 @@ export default function Page() {
           selectionDragRef.current = {
             mode: "new",
             startTX: clamp(tx, 0, tilesPerRow - 1),
-            startTY: clamp(ty, 0, Math.ceil(tilesRef.current.length / tilesPerRow) - 1),
+            // clamp considerando viewOffset (linhas visíveis)
+            startTY: clamp(
+              ty,
+              0,
+              Math.ceil(Math.max(0, (tilesRef.current.length - viewOffset)) / Math.max(1, tilesPerRow)) - 1
+            ),
             startSel: null,
             previewDX: 0,
             previewDY: 0,
@@ -1084,8 +1233,9 @@ export default function Page() {
       if (tx >= 0 && ty >= 0) {
         const baseOffset = parseInt(baseOffsetHex || "0", 16) || 0;
         const stride = Math.max(CODECS[codec].bytesPerTile, tileStrideBytes | 0);
-
-        const gIndex = viewOffset + ty * Math.max(1, tilesPerRow) + tx;
+        const pageTiles = currentPageTiles();
+        const pageBase = pagingEnabled ? pageIndex * pageTiles : 0;
+        const gIndex = viewOffset + pageBase + ty * Math.max(1, tilesPerRow) + tx;
         const inRange = gIndex >= 0 && gIndex < tilesRef.current.length;
         let tileOffsetHex: string | null = null;
         let pixelOffsetHex: string | null = null;
@@ -1317,41 +1467,65 @@ export default function Page() {
   function downloadBin() {
     const codecDef = CODECS[codec];
 
-    let tilesToExport: Uint8Array[] = [];
-
+    // Caso haja seleção: exporta somente os tiles da seleção, contíguos
     if (selection) {
-      // Exportar apenas a seleção
+      const picked: Uint8Array[] = [];
       const { x, y, w, h } = selection;
       for (let ty = 0; ty < h; ty++) {
         for (let tx = 0; tx < w; tx++) {
-          const srcIndex = viewTileIndex(x + tx, y + ty);
-          if (srcIndex >= 0 && srcIndex < tilesRef.current.length) {
-            tilesToExport.push(new Uint8Array(tilesRef.current[srcIndex]));
-          }
+          const idx = viewTileIndex(x + tx, y + ty);
+          if (idx >= 0 && idx < tilesRef.current.length) picked.push(new Uint8Array(tilesRef.current[idx]));
         }
       }
-    } else {
-      // Exportar todos
-      tilesToExport = tilesRef.current;
+      const outSel = new Uint8Array(picked.length * codecDef.bytesPerTile);
+      for (let i = 0; i < picked.length; i++) outSel.set(codecDef.encodeTile(picked[i]), i * codecDef.bytesPerTile);
+      const blobSel = new Blob([outSel], { type: "application/octet-stream" });
+      const aSel = document.createElement("a");
+      aSel.href = URL.createObjectURL(blobSel);
+      let nameSel = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
+      nameSel += "_selection";
+      aSel.download = `${nameSel}_${codec}.bin`;
+      aSel.click();
+      URL.revokeObjectURL(aSel.href);
+      return;
     }
 
-    const out = new Uint8Array(tilesToExport.length * codecDef.bytesPerTile);
-    for (let t = 0; t < tilesToExport.length; t++) {
-      const encoded = codecDef.encodeTile(tilesToExport[t]);
-      out.set(encoded, t * codecDef.bytesPerTile);
+    // Export completo: preservar exatamente o tamanho original do arquivo, aplicando somente os bytes dos tiles (respeitando baseOffset/stride)
+    const baseOffset = parseInt(baseOffsetHex || "0", 16) || 0;
+    const stride = Math.max(codecDef.bytesPerTile, tileStrideBytes | 0);
+
+    if (rawBytes && rawBytes.length > 0) {
+      const out = new Uint8Array(rawBytes); // copia (preserva tail, headers, padding entre tiles)
+      const totalTiles = tilesRef.current.length;
+      for (let i = 0; i < totalTiles; i++) {
+        const start = baseOffset + i * stride;
+        if (start >= out.length) break;
+        const enc = codecDef.encodeTile(tilesRef.current[i]);
+        const avail = Math.max(0, Math.min(out.length, start + codecDef.bytesPerTile) - start);
+        if (avail > 0) out.set(enc.subarray(0, avail), start);
+      }
+      const blob = new Blob([out], { type: "application/octet-stream" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      const baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
+      a.download = `${baseName}_${codec}.bin`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setIsDirty(false);
+      return;
     }
 
+    // Caso não haja arquivo original (novo blank): exporta sequência linear dos tiles
+    const all = tilesRef.current;
+    const out = new Uint8Array(all.length * codecDef.bytesPerTile);
+    for (let i = 0; i < all.length; i++) out.set(codecDef.encodeTile(all[i]), i * codecDef.bytesPerTile);
     const blob = new Blob([out], { type: "application/octet-stream" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-
-    let baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
-    if (selection) baseName += "_selection";
-
+    const baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
     a.download = `${baseName}_${codec}.bin`;
     a.click();
     URL.revokeObjectURL(a.href);
-
     setIsDirty(false);
   }
 
@@ -1682,7 +1856,7 @@ export default function Page() {
           </div>
         </div>
       )}
-      
+
       {/* Top bar */}
       <header className="h-12 flex items-center gap-3 px-4 border-b border-border bg-background">
         <strong className="text-sm">TileBravo</strong>
@@ -1879,35 +2053,42 @@ export default function Page() {
                 display: "block",
                 cursor:
                   tool === "pencil"
-                    ? "url(\"data:image/svg+xml;utf8,\
-          <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'>\
-          <path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z' fill='black' stroke='white' stroke-width='2'/>\
-          <path d='M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.29a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75 1.83-1.83z' fill='black' stroke='white' stroke-width='2'/>\
-          </svg>\") 1 22, auto" :
-                    tool === "eyedropper"
-                      ? "url(\"data:image/svg+xml;utf8,\
-  <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='lucide lucide-pipette-icon lucide-pipette'>\
-  <path d='m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12'/>\
-  <path d='m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z'/>\
-  <path d='m2 22 .414-.414'/>\
-  </svg>\") 4 15, auto" :
-                      tool === "line"
-                        ? "url(\"data:image/svg+xml;utf8,\
-  <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='lucide lucide-pencil-line'>\
-    <path d='M13 21h8' />\
-    <path d='m15 5 4 4' />\
-    <path d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' />\
-  </svg>\") 4 15, auto" :
-                        tool === "bucket"
-                          ? "url(\"data:image/svg+xml;utf8,\
-  <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='lucide lucide-paint-bucket'>\
-    <path d='m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z' />\
-    <path d='m5 2 5 5' />\
-    <path d='M2 13h15' />\
-    <path d='M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z' />\
-  </svg>\") 4 15, auto" :
-                          tool === "select" ? "cell" :
-                            "default",
+                    ? svgCursor(
+                      "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'>" +
+                      "<path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z' fill='black' stroke='white' stroke-width='2'/>" +
+                      "<path d='M20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.29a1 1 0 0 0-1.41 0l-1.83 1.83l3.75 3.75 1.83-1.83z' fill='black' stroke='white' stroke-width='2'/>" +
+                      "</svg>",
+                      1, 22
+                    )
+                    : tool === "eyedropper"
+                      ? svgCursor(
+                        "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" +
+                        "<path d='m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12'/>" +
+                        "<path d='m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z'/>" +
+                        "<path d='m2 22 .414-.414'/>" +
+                        "</svg>",
+                        4, 15
+                      )
+                      : tool === "line"
+                        ? svgCursor(
+                          "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" +
+                          "<path d='M13 21h8' />" +
+                          "<path d='m15 5 4 4' />" +
+                          "<path d='M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' />" +
+                          "</svg>",
+                          4, 15
+                        )
+                        : tool === "bucket"
+                          ? svgCursor(
+                            "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>" +
+                            "<path d='m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z' />" +
+                            "<path d='m5 2 5 5' />" +
+                            "<path d='M2 13h15' />" +
+                            "<path d='M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z' />" +
+                            "</svg>",
+                            4, 15
+                          )
+                          : tool === "select" ? "cell" : "default",
               }}
             />
 
@@ -1915,6 +2096,65 @@ export default function Page() {
             {isDragging && (
               <div className="absolute inset-0 bg-primary/20 flex items-center justify-center text-primary font-semibold text-lg pointer-events-none">
                 Drop file to open
+              </div>
+            )}
+            {pagingEnabled && (
+              <div className="sticky bottom-0 left-0 right-0 bg-background/90 backdrop-blur-sm border-t border-border flex items-center justify-between px-2 py-1 text-xs">
+                <button
+                  className="px-2 py-1 rounded border border-border bg-surface hover:bg-muted"
+                  onClick={() => setPageIndex(i => Math.max(0, i - 1))}
+                >Prev Page</button>
+                <div className="flex items-center gap-1">
+                  {(() => {
+                    const pageTiles = currentPageTiles();
+                    const base = viewOffset > 0 ? viewOffset : 0;
+                    const total = Math.max(0, tilesRef.current.length);
+                    const remaining = Math.max(0, total - base);
+                    const pages = Math.max(1, Math.ceil(remaining / pageTiles));
+                    const curr = Math.min(pageIndex + 1, pages);
+                    const pageBase = base + pageIndex * pageTiles;
+                    const startIdx = Math.min(pageBase, Math.max(0, total - 1));
+                    const endIdx = Math.min(total - 1, pageBase + pageTiles - 1);
+                    const bOfs = parseInt(baseOffsetHex || "0", 16) || 0;
+                    const stride = Math.max(CODECS[codec].bytesPerTile, tileStrideBytes | 0);
+                    const startByte = Math.max(0, bOfs + startIdx * stride);
+                    const endByte = Math.max(0, bOfs + endIdx * stride);
+                    const hex = (n: number) => "0x" + Math.max(0, n >>> 0).toString(16).toUpperCase();
+                    return (
+                      <>
+                        <span className="tabular-nums">{hex(startByte)}</span>
+                        <span>-</span>
+                        <label className="sr-only" htmlFor="page-input">Page</label>
+                        <input
+                          id="page-input"
+                          type="number"
+                          className="h-6 w-12 text-center rounded border border-border bg-surface"
+                          value={curr}
+                          min={1}
+                          max={pages}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value || "1", 10);
+                            const clamped = Math.max(1, Math.min(isNaN(v) ? 1 : v, pages));
+                            setPageIndex(clamped - 1);
+                          }}
+                        />
+                        <span>/{pages}</span>
+                        <span>-</span>
+                        <span className="tabular-nums">{hex(endByte)}</span>
+                      </>
+                    );
+                  })()}
+                </div>
+                <button
+                  className="px-2 py-1 rounded border border-border bg-surface hover:bg-muted"
+                  onClick={() => {
+                    const pageTiles = currentPageTiles();
+                    const base = viewOffset > 0 ? viewOffset : 0;
+                    const remaining = Math.max(0, tilesRef.current.length - base);
+                    const pages = Math.max(1, Math.ceil(remaining / pageTiles));
+                    setPageIndex(i => Math.min(i + 1, pages - 1));
+                  }}
+                >Next Page</button>
               </div>
             )}
           </div>
@@ -1965,11 +2205,18 @@ export default function Page() {
             const stride = Math.max(CODECS[codec].bytesPerTile, tileStrideBytes | 0);
             const idx = Math.max(0, Math.floor((ofs - base) / stride));
             const clamped = Math.min(Math.max(0, idx), Math.max(0, tilesCount - 1));
-            setViewOffset(clamped);
-            setSelection({ x: 0, y: 0, w: 1, h: 1 });
+            const baseView = viewOffset > 0 ? viewOffset : 0;
+            const pageTiles = currentPageTiles();
+            // Escolhe a página que contém o tile alvo (a partir do baseView)
+            const newPage = Math.max(0, Math.floor((clamped - baseView) / Math.max(1, pageTiles)));
+            setPageIndex(newPage);
+            // Índice local dentro da página
+            const local = Math.max(0, clamped - baseView - newPage * Math.max(1, pageTiles));
+            const tx = local % Math.max(1, tilesPerRow);
+            const ty = Math.floor(local / Math.max(1, tilesPerRow));
+            setSelection({ x: tx, y: ty, w: 1, h: 1 });
             const ps = Math.max(1, pixelSize);
-            const xpx = 0;
-            const ty = Math.floor(clamped / Math.max(1, tilesPerRow));
+            const xpx = tx * TILE_W * ps;
             const ypx = ty * TILE_H * ps;
             const vp = innerViewportRef.current || viewportRef.current;
             const outer = viewportRef.current;

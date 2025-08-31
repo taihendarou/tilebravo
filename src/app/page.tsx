@@ -14,7 +14,7 @@ import type { CodecId } from "../lib/codecs";
 import { CODECS } from "../lib/codecs";
 import { computeOffsets } from "../lib/offsets";
 import { toHex } from "../lib/utils/hex";
-import { renderCanvas } from "../lib/render";
+import { renderCanvas, renderCanvasRegion } from "../lib/render";
 
 type ToolId = "select" | "pencil" | "eyedropper" | "line" | "bucket";
 type PaletteDef = { name: string; colors: string[] };
@@ -195,7 +195,103 @@ export default function Page() {
 
   const [currentColor, setCurrentColor] = useState<number>(0); // índice 0..3
 
-  const [tiles, setTiles] = useState<Uint8Array[]>([]);
+  // Tiles live in a ref to avoid React re-renders on per-pixel changes
+  const tilesRef = useRef<Uint8Array[]>([]);
+  const [tilesCount, setTilesCount] = useState<number>(0);
+  // Redraw scheduler
+  const drawRafPendingRef = useRef(false);
+  // Dirty rectangles (absolute pixels, not scaled)
+  const dirtyRectsRef = useRef<{ ax: number; ay: number; aw: number; ah: number }[]>([]);
+  const fullRedrawNeededRef = useRef(false);
+
+  function markFullRedraw() {
+    fullRedrawNeededRef.current = true;
+    scheduleRedraw();
+  }
+  function markDirtyRect(ax: number, ay: number, aw: number, ah: number) {
+    if (aw <= 0 || ah <= 0) return;
+    dirtyRectsRef.current.push({ ax, ay, aw, ah });
+    scheduleRedraw();
+  }
+  function markDirtyTile(tx: number, ty: number) {
+    const visX = ((tx - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+    markDirtyRect(visX * TILE_W, ty * TILE_H, TILE_W, TILE_H);
+  }
+
+  function redrawNow() {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (tilesCount > 0) {
+      renderCanvas(ctx, {
+        tiles: tilesRef.current,
+        palette,
+        tilesPerRow,
+        pixelSize,
+        columnShift,
+        showTileGrid,
+        showPixelGrid,
+        selection: selection ?? undefined,
+        selectionPreview:
+          selection && selectionDragRef.current.mode === "move"
+            ? { dx: selectionDragRef.current.previewDX, dy: selectionDragRef.current.previewDY }
+            : null,
+        linePreview:
+          tool === "line" && lineRef.current.drawing && linePreviewEnd
+            ? { ax1: lineRef.current.startAX, ay1: lineRef.current.startAY, ax2: linePreviewEnd.ax, ay2: linePreviewEnd.ay, colorIndex: clamp(currentColor, 0, Math.max(0, palette.length - 1)) }
+            : null,
+      });
+    } else {
+      ctx.canvas.width = viewportTilesX * TILE_W * pixelSize;
+      ctx.canvas.height = viewportTilesY * TILE_H * pixelSize;
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+  }
+  function scheduleRedraw() {
+    if (drawRafPendingRef.current) return;
+    drawRafPendingRef.current = true;
+    requestAnimationFrame(() => {
+      drawRafPendingRef.current = false;
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (!canvas || !ctx) return;
+
+      // If full redraw requested or there are overlays changing often, redraw all
+      const needFull = fullRedrawNeededRef.current;
+      const dirty = dirtyRectsRef.current;
+      fullRedrawNeededRef.current = false;
+      dirtyRectsRef.current = [];
+
+      if (needFull || dirty.length === 0) {
+        redrawNow();
+        return;
+      }
+
+      const params = {
+        tiles: tilesRef.current,
+        palette,
+        tilesPerRow,
+        pixelSize,
+        columnShift,
+        showTileGrid,
+        showPixelGrid,
+        selection: selection ?? undefined,
+        selectionPreview:
+          selection && selectionDragRef.current.mode === "move"
+            ? { dx: selectionDragRef.current.previewDX, dy: selectionDragRef.current.previewDY }
+            : null,
+        linePreview:
+          tool === "line" && lineRef.current.drawing && linePreviewEnd
+            ? { ax1: lineRef.current.startAX, ay1: lineRef.current.startAY, ax2: linePreviewEnd?.ax ?? 0, ay2: linePreviewEnd?.ay ?? 0, colorIndex: clamp(currentColor, 0, Math.max(0, palette.length - 1)) }
+            : null,
+      } as const;
+
+      for (const r of dirty) {
+        renderCanvasRegion(ctx, params, r);
+      }
+    });
+  }
 
   // Arquivo carregado bruto e nome
   const [rawBytes, setRawBytes] = useState<Uint8Array | null>(null);
@@ -281,44 +377,18 @@ export default function Page() {
   }, [palette, currentColor]);
 
 
-  // Desenho
+  // Desenho: full redraw only on structural/view changes
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    if (tiles.length > 0) {
-      renderCanvas(ctx, {
-        tiles,
-        palette,
-        tilesPerRow,
-        pixelSize,
-        columnShift,
-        showTileGrid,
-        showPixelGrid,
-        selection: selection ?? undefined,
-        selectionPreview:
-          selection && selectionDragRef.current.mode === "move"
-            ? { dx: selectionDragRef.current.previewDX, dy: selectionDragRef.current.previewDY }
-            : null,
-        linePreview:
-          tool === "line" && lineRef.current.drawing && linePreviewEnd
-            ? { ax1: lineRef.current.startAX, ay1: lineRef.current.startAY, ax2: linePreviewEnd.ax, ay2: linePreviewEnd.ay, colorIndex: clamp(currentColor, 0, Math.max(0, palette.length - 1)) }
-            : null,
-      });
-    } else {
-      ctx.canvas.width = viewportTilesX * TILE_W * pixelSize;
-      ctx.canvas.height = viewportTilesY * TILE_H * pixelSize;
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    }
-  }, [tiles, palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, selection, linePreviewEnd, tool, columnShift, currentColor]);
+    redrawNow();
+  }, [palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, tilesCount]);
 
   // Re-decode ao mudar arquivo ou parâmetros
   useEffect(() => {
     if (!rawBytes) return;
     if (!codec) {
-      setTiles([]);
+      tilesRef.current = [];
+      setTilesCount(0);
+      scheduleRedraw();
       return;
     }
     const baseOffset = parseInt(baseOffsetHex || "0", 16);
@@ -334,7 +404,9 @@ export default function Page() {
         for (let i = 0; i < tilesCount; i++) {
           out[i] = pixels.subarray(i * tileSize, (i + 1) * tileSize);
         }
-        setTiles(out);
+        tilesRef.current = out;
+        setTilesCount(out.length);
+        markFullRedraw();
         worker.terminate();
         const endAt = loadingMinEndAtRef.current;
         if (isLoadingRef.current && endAt) {
@@ -351,7 +423,9 @@ export default function Page() {
           stride,
           codec
         );
-        setTiles(decoded);
+        tilesRef.current = decoded;
+        setTilesCount(decoded.length);
+        markFullRedraw();
         const endAt = loadingMinEndAtRef.current;
         if (isLoadingRef.current && endAt) {
           const remain = Math.max(0, endAt - Date.now());
@@ -367,7 +441,9 @@ export default function Page() {
         stride,
         codec
       );
-      setTiles(decoded);
+      tilesRef.current = decoded;
+      setTilesCount(decoded.length);
+      markFullRedraw();
       const endAt = loadingMinEndAtRef.current;
       if (isLoadingRef.current && endAt) {
         const remain = Math.max(0, endAt - Date.now());
@@ -418,13 +494,13 @@ export default function Page() {
     paletteLen: 0,
     selection: null as Selection,
     tilesPerRow: 0,
-    tiles: [] as Uint8Array[],
     isViewportFocused: false,
   });
   useEffect(() => { keyCtxRef.current.paletteLen = palette.length; }, [palette.length]);
   useEffect(() => { keyCtxRef.current.selection = selection; }, [selection]);
   useEffect(() => { keyCtxRef.current.tilesPerRow = tilesPerRow; }, [tilesPerRow]);
-  useEffect(() => { keyCtxRef.current.tiles = tiles; }, [tiles]);
+  // keep in sync with ref length so copy/paste can use latest
+  useEffect(() => { /* tiles live in tilesRef */ }, [tilesCount]);
   useEffect(() => { keyCtxRef.current.isViewportFocused = isViewportFocused; }, [isViewportFocused]);
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -465,7 +541,7 @@ export default function Page() {
         for (let ty = 0; ty < h; ty++) {
           for (let tx = 0; tx < w; tx++) {
             const idx = (y + ty) * ctx.tilesPerRow + (x + tx);
-            if (idx >= 0 && idx < ctx.tiles.length) copied.push(new Uint8Array(ctx.tiles[idx]));
+            if (idx >= 0 && idx < tilesRef.current.length) copied.push(new Uint8Array(tilesRef.current[idx]));
           }
         }
         clipboardRef.current = { tiles: copied, w, h };
@@ -477,8 +553,8 @@ export default function Page() {
         if (!ctx.isViewportFocused) return;
         const clip = clipboardRef.current; if (!clip) return;
         const sel = ctx.selection; const targetX = sel ? sel.x : 0; const targetY = sel ? sel.y : 0;
-        setTiles(prev => {
-          const next = prev.slice();
+        {
+          const next = tilesRef.current.slice();
           for (let ty = 0; ty < clip.h; ty++) {
             for (let tx = 0; tx < clip.w; tx++) {
               const dstX = targetX + tx; const dstY = targetY + ty;
@@ -490,8 +566,15 @@ export default function Page() {
               }
             }
           }
-          return next;
-        });
+          tilesRef.current = next;
+          scheduleRedraw();
+          markDirtyRect(
+            ((targetX - (columnShift % Math.max(1, tilesPerRow)) + tilesPerRow) % tilesPerRow) * TILE_W,
+            targetY * TILE_H,
+            clip.w * TILE_W,
+            clip.h * TILE_H
+          );
+        }
         setIsDirty(true);
         e.preventDefault();
       }
@@ -516,7 +599,9 @@ export default function Page() {
         for (let i = 0; i < tilesCount; i++) {
           out[i] = pixels.subarray(i * tileSize, (i + 1) * tileSize);
         }
-        setTiles(out);
+        tilesRef.current = out;
+        setTilesCount(out.length);
+        markFullRedraw();
         worker.terminate();
         const endAt = loadingMinEndAtRef.current;
         if (isLoadingRef.current && endAt) {
@@ -534,7 +619,9 @@ export default function Page() {
           stride,
           codec
         );
-        setTiles(decoded);
+        tilesRef.current = decoded;
+        setTilesCount(decoded.length);
+        markFullRedraw();
         const endAt = loadingMinEndAtRef.current;
         if (isLoadingRef.current && endAt) {
           const remain = Math.max(0, endAt - Date.now());
@@ -551,7 +638,9 @@ export default function Page() {
         stride,
         codec
       );
-      setTiles(decoded);
+      tilesRef.current = decoded;
+      setTilesCount(decoded.length);
+      markFullRedraw();
       const endAt = loadingMinEndAtRef.current;
       if (isLoadingRef.current && endAt) {
         const remain = Math.max(0, endAt - Date.now());
@@ -592,158 +681,186 @@ export default function Page() {
 
   function samplePixelValue(tx: number, ty: number, px: number, py: number): number | null {
     const tileIndex = ty * tilesPerRow + tx;
-    if (tileIndex < 0 || tileIndex >= tiles.length) return null;
+    if (tileIndex < 0 || tileIndex >= tilesRef.current.length) return null;
     const idxInTile = py * TILE_W + px;
-    return tiles[tileIndex][idxInTile];
+    return tilesRef.current[tileIndex][idxInTile];
   }
 
   // Paint bucket (flood fill 4-directions) over absolute pixel grid
   function bucketFill(axStart: number, ayStart: number) {
-    setTiles(prev => {
-      const width = tilesPerRow * TILE_W;
-      const rowsTotal = Math.ceil(prev.length / tilesPerRow);
-      const height = rowsTotal * TILE_H;
-      if (axStart < 0 || ayStart < 0 || axStart >= width || ayStart >= height) return prev;
+    const prev = tilesRef.current;
+    const width = tilesPerRow * TILE_W;
+    const rowsTotal = Math.ceil(prev.length / tilesPerRow);
+    const height = rowsTotal * TILE_H;
+    if (axStart < 0 || ayStart < 0 || axStart >= width || ayStart >= height) return;
 
-      // Read target color from original data
-      const tx0 = Math.floor(axStart / TILE_W);
-      const ty0 = Math.floor(ayStart / TILE_H);
-      const idx0 = ty0 * tilesPerRow + tx0;
-      if (idx0 < 0 || idx0 >= prev.length) return prev;
-      const px0 = axStart % TILE_W;
-      const py0 = ayStart % TILE_H;
-      const target = prev[idx0][py0 * TILE_W + px0];
-      const replacement = clamp(currentColor, 0, Math.max(0, palette.length - 1));
-      if (target === replacement) return prev;
+    // Read target color from original data
+    const tx0 = Math.floor(axStart / TILE_W);
+    const ty0 = Math.floor(ayStart / TILE_H);
+    const idx0 = ty0 * tilesPerRow + tx0;
+    if (idx0 < 0 || idx0 >= prev.length) return;
+    const px0 = axStart % TILE_W;
+    const py0 = ayStart % TILE_H;
+    const target = prev[idx0][py0 * TILE_W + px0];
+    const replacement = clamp(currentColor, 0, Math.max(0, palette.length - 1));
+    if (target === replacement) return;
 
-      const next = prev.slice();
-      const changed = new Map<number, Uint8Array>();
+    const next = prev.slice();
+    const changed = new Map<number, Uint8Array>();
 
-      const visited = new Uint8Array(width * height);
-      const q = new Int32Array(width * height);
-      let head = 0, tail = 0;
-      const start = ayStart * width + axStart;
-      visited[start] = 1;
-      q[tail++] = start;
+    const visited = new Uint8Array(width * height);
+    const q = new Int32Array(width * height);
+    let head = 0, tail = 0;
+    const start = ayStart * width + axStart;
+    visited[start] = 1;
+    q[tail++] = start;
 
-      const getOrig = (ax: number, ay: number): number | null => {
-        if (ax < 0 || ay < 0 || ax >= width || ay >= height) return null;
-        const tx = Math.floor(ax / TILE_W);
-        const ty = Math.floor(ay / TILE_H);
-        const idx = ty * tilesPerRow + tx;
-        if (idx < 0 || idx >= prev.length) return null;
-        const px = ax % TILE_W;
-        const py = ay % TILE_H;
-        return prev[idx][py * TILE_W + px];
-      };
+    const getOrig = (ax: number, ay: number): number | null => {
+      if (ax < 0 || ay < 0 || ax >= width || ay >= height) return null;
+      const tx = Math.floor(ax / TILE_W);
+      const ty = Math.floor(ay / TILE_H);
+      const idx = ty * tilesPerRow + tx;
+      if (idx < 0 || idx >= prev.length) return null;
+      const px = ax % TILE_W;
+      const py = ay % TILE_H;
+      return prev[idx][py * TILE_W + px];
+    };
 
-      const setNew = (ax: number, ay: number) => {
-        const tx = Math.floor(ax / TILE_W);
-        const ty = Math.floor(ay / TILE_H);
-        const idx = ty * tilesPerRow + tx;
-        let tile = changed.get(idx);
-        if (!tile) {
-          tile = new Uint8Array(next[idx]);
-          changed.set(idx, tile);
-        }
-        const px = ax % TILE_W;
-        const py = ay % TILE_H;
-        tile[py * TILE_W + px] = replacement;
-      };
-
-      while (head < tail) {
-        const p = q[head++];
-        const ax = p % width;
-        const ay = Math.floor(p / width);
-        const c = getOrig(ax, ay);
-        if (c == null || c !== target) continue;
-        setNew(ax, ay);
-        // push neighbors 4-dir
-        if (ax + 1 < width) {
-          const np = ay * width + (ax + 1);
-          if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
-        }
-        if (ax - 1 >= 0) {
-          const np = ay * width + (ax - 1);
-          if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
-        }
-        if (ay + 1 < height) {
-          const np = (ay + 1) * width + ax;
-          if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
-        }
-        if (ay - 1 >= 0) {
-          const np = (ay - 1) * width + ax;
-          if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
-        }
+    const setNew = (ax: number, ay: number) => {
+      const tx = Math.floor(ax / TILE_W);
+      const ty = Math.floor(ay / TILE_H);
+      const idx = ty * tilesPerRow + tx;
+      let tile = changed.get(idx);
+      if (!tile) {
+        tile = new Uint8Array(next[idx]);
+        changed.set(idx, tile);
       }
+      const px = ax % TILE_W;
+      const py = ay % TILE_H;
+      tile[py * TILE_W + px] = replacement;
+    };
 
-      for (const [i, t] of changed) next[i] = t;
-      return next;
-    });
+    while (head < tail) {
+      const p = q[head++];
+      const ax = p % width;
+      const ay = Math.floor(p / width);
+      const c = getOrig(ax, ay);
+      if (c == null || c !== target) continue;
+      setNew(ax, ay);
+      // push neighbors 4-dir
+      if (ax + 1 < width) {
+        const np = ay * width + (ax + 1);
+        if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
+      }
+      if (ax - 1 >= 0) {
+        const np = ay * width + (ax - 1);
+        if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
+      }
+      if (ay + 1 < height) {
+        const np = (ay + 1) * width + ax;
+        if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
+      }
+      if (ay - 1 >= 0) {
+        const np = (ay - 1) * width + ax;
+        if (!visited[np]) { visited[np] = 1; q[tail++] = np; }
+      }
+    }
+
+    let minTX = Infinity, minTY = Infinity, maxTX = -Infinity, maxTY = -Infinity;
+    for (const [i, t] of changed) {
+      next[i] = t;
+      const tx = i % tilesPerRow;
+      const ty = Math.floor(i / tilesPerRow);
+      if (tx < minTX) minTX = tx;
+      if (ty < minTY) minTY = ty;
+      if (tx > maxTX) maxTX = tx;
+      if (ty > maxTY) maxTY = ty;
+    }
+    tilesRef.current = next;
+    scheduleRedraw();
+    if (minTX !== Infinity) {
+      const visMinX = ((minTX - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+      const visMaxX = ((maxTX - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+      if (visMaxX >= visMinX) {
+        markDirtyRect(visMinX * TILE_W, minTY * TILE_H, (visMaxX - visMinX + 1) * TILE_W, (maxTY - minTY + 1) * TILE_H);
+      } else {
+        // wrapped around shift: mark two rects
+        markDirtyRect(0, minTY * TILE_H, (visMaxX + 1) * TILE_W, (maxTY - minTY + 1) * TILE_H);
+        markDirtyRect(visMinX * TILE_W, minTY * TILE_H, (tilesPerRow - visMinX) * TILE_W, (maxTY - minTY + 1) * TILE_H);
+      }
+    }
     setIsDirty(true);
   }
 
   // desenha uma linha entre dois pixels absolutos (Bresenham), respeitando bordas
   function drawLine(ax1: number, ay1: number, ax2: number, ay2: number) {
-    setTiles(prev => {
-      const next = prev.slice();
-      const changed = new Map<number, Uint8Array>();
+    const prev = tilesRef.current;
+    const next = prev.slice();
+    const changed = new Map<number, Uint8Array>();
 
-      let x1 = Math.floor(ax1), y1 = Math.floor(ay1);
-      const x2 = Math.floor(ax2), y2 = Math.floor(ay2);
-      const dx = Math.abs(x2 - x1);
-      const dy = Math.abs(y2 - y1);
-      const sx = x1 < x2 ? 1 : -1;
-      const sy = y1 < y2 ? 1 : -1;
-      let err = dx - dy;
+    let x1 = Math.floor(ax1), y1 = Math.floor(ay1);
+    const x2 = Math.floor(ax2), y2 = Math.floor(ay2);
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const sx = x1 < x2 ? 1 : -1;
+    const sy = y1 < y2 ? 1 : -1;
+    let err = dx - dy;
 
-      const rowsTotal = Math.ceil(prev.length / tilesPerRow);
-      const maxAX = tilesPerRow * TILE_W - 1;
-      const maxAY = rowsTotal * TILE_H - 1;
-      const color = clamp(currentColor, 0, Math.max(0, palette.length - 1));
+    const rowsTotal = Math.ceil(prev.length / tilesPerRow);
+    const maxAX = tilesPerRow * TILE_W - 1;
+    const maxAY = rowsTotal * TILE_H - 1;
+    const color = clamp(currentColor, 0, Math.max(0, palette.length - 1));
 
-      function plot(ax: number, ay: number) {
-        if (ax < 0 || ay < 0 || ax > maxAX || ay > maxAY) return;
-        const tx = Math.floor(ax / TILE_W);
-        const ty = Math.floor(ay / TILE_H);
-        const idx = ty * tilesPerRow + tx;
-        if (idx < 0 || idx >= next.length) return;
-        let tile = changed.get(idx);
-        if (!tile) {
-          tile = new Uint8Array(next[idx]);
-          changed.set(idx, tile);
-        }
-        const px = ax % TILE_W;
-        const py = ay % TILE_H;
-        tile[py * TILE_W + px] = color;
+    function plot(ax: number, ay: number) {
+      if (ax < 0 || ay < 0 || ax > maxAX || ay > maxAY) return;
+      const tx = Math.floor(ax / TILE_W);
+      const ty = Math.floor(ay / TILE_H);
+      const idx = ty * tilesPerRow + tx;
+      if (idx < 0 || idx >= next.length) return;
+      let tile = changed.get(idx);
+      if (!tile) {
+        tile = new Uint8Array(next[idx]);
+        changed.set(idx, tile);
       }
+      const px = ax % TILE_W;
+      const py = ay % TILE_H;
+      tile[py * TILE_W + px] = color;
+    }
 
-      for (; ;) {
-        plot(x1, y1);
-        if (x1 === x2 && y1 === y2) break;
-        const e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x1 += sx; }
-        if (e2 < dx) { err += dx; y1 += sy; }
-      }
+    for (; ;) {
+      plot(x1, y1);
+      if (x1 === x2 && y1 === y2) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x1 += sx; }
+      if (e2 < dx) { err += dx; y1 += sy; }
+    }
 
-      for (const [i, t] of changed) next[i] = t;
-      return next;
-    });
+    for (const [i, t] of changed) next[i] = t;
+    tilesRef.current = next;
+    scheduleRedraw();
+    const minAX = Math.max(0, Math.min(ax1, ax2));
+    const minAY = Math.max(0, Math.min(ay1, ay2));
+    const endAX = Math.max(ax1, ax2);
+    const endAY = Math.max(ay1, ay2);
+    markDirtyRect(minAX, minAY, (endAX - minAX + 1), (endAY - minAY + 1));
     setIsDirty(true);
   }
 
   // Pencil escreve currentColor
   function pencilApply(px: number, py: number, tx: number, ty: number) {
     const tileIndex = ty * tilesPerRow + tx;
-    if (tileIndex < 0 || tileIndex >= tiles.length) return;
+    if (tileIndex < 0 || tileIndex >= tilesRef.current.length) return;
     const idxInTile = py * TILE_W + px;
-    setTiles(prev => {
-      const next = prev.slice();
-      const t = new Uint8Array(next[tileIndex]);
-      t[idxInTile] = clamp(currentColor, 0, palette.length - 1);
-      next[tileIndex] = t;
-      return next;
-    });
+    const next = tilesRef.current.slice();
+    const t = new Uint8Array(next[tileIndex]);
+    t[idxInTile] = clamp(currentColor, 0, palette.length - 1);
+    next[tileIndex] = t;
+    tilesRef.current = next;
+    scheduleRedraw();
+    const visX = ((tx - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+    const ax = visX * TILE_W + px;
+    const ay = ty * TILE_H + py;
+    markDirtyRect(ax, ay, 1, 1);
     setIsDirty(true);
   }
 
@@ -755,33 +872,38 @@ export default function Page() {
   }
 
   function resizeTiles(total: number) {
-    const cur = tiles.length;
+    const cur = tilesRef.current.length;
     const n = Math.max(1, Math.floor(total || 1));
     if (n === cur) return;
 
     if (n < cur) {
-      if (!isAllBlank(tiles)) {
+      if (!isAllBlank(tilesRef.current)) {
         const ok = window.confirm("Reducing the number of tiles may discard data. Proceed?");
         if (!ok) return;
       }
-      setTiles(prev => prev.slice(0, n));
+      tilesRef.current = tilesRef.current.slice(0, n);
+      setTilesCount(n);
+      scheduleRedraw();
       setIsDirty(true);
       return;
     }
 
     // grow: append blank tiles (all zeros)
-    setTiles(prev => {
+    {
+      const prev = tilesRef.current;
       const next = prev.slice();
       for (let i = prev.length; i < n; i++) next.push(new Uint8Array(TILE_W * TILE_H));
-      return next;
-    });
+      tilesRef.current = next;
+      setTilesCount(next.length);
+      scheduleRedraw();
+    }
     setIsDirty(true);
   }
 
 
   // Canvas events
   const onCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (tiles.length === 0) return;
+    if (tilesRef.current.length === 0) return;
     const { tx, ty, px, py } = getTileCoordsFromMouse(e);
     const ax = tx * TILE_W + px;
     const ay = ty * TILE_H + py;
@@ -848,7 +970,7 @@ export default function Page() {
           selectionDragRef.current = {
             mode: "new",
             startTX: clamp(tx, 0, tilesPerRow - 1),
-            startTY: clamp(ty, 0, Math.ceil(tiles.length / tilesPerRow) - 1),
+            startTY: clamp(ty, 0, Math.ceil(tilesRef.current.length / tilesPerRow) - 1),
             startSel: null,
             previewDX: 0,
             previewDY: 0,
@@ -915,6 +1037,13 @@ export default function Page() {
     if (tool === "line" && lineRef.current.drawing) {
       const ax = tx * TILE_W + px;
       const ay = ty * TILE_H + py;
+      // mark dirty for previous preview line and new one
+      const prevEnd = linePreviewEnd || { ax: lineRef.current.startAX, ay: lineRef.current.startAY };
+      const minAX = Math.max(0, Math.min(prevEnd.ax, ax));
+      const minAY = Math.max(0, Math.min(prevEnd.ay, ay));
+      const endAX = Math.max(prevEnd.ax, ax);
+      const endAY = Math.max(prevEnd.ay, ay);
+      markDirtyRect(minAX, minAY, (endAX - minAX + 1), (endAY - minAY + 1));
       lineDraftRef.current = { ax, ay };
       if (!lineRafPendingRef.current) {
         lineRafPendingRef.current = true;
@@ -928,7 +1057,7 @@ export default function Page() {
 
     // 5) Lógica do seletor (criar/mover seleção)
     if (tool === "select" && mode !== "none") {
-      const maxTy = Math.ceil(tiles.length / tilesPerRow) - 1;
+      const maxTy = Math.ceil(tilesRef.current.length / tilesPerRow) - 1;
 
       if (mode === "new") {
         const rect = normRect(
@@ -951,10 +1080,25 @@ export default function Page() {
           });
         }
       } else if (mode === "move" && selectionDragRef.current.startSel) {
+        const oldDX = selectionDragRef.current.previewDX;
+        const oldDY = selectionDragRef.current.previewDY;
         const dx = tx - selectionDragRef.current.startTX;
         const dy = ty - selectionDragRef.current.startTY;
         selectionDragRef.current.previewDX = dx;
         selectionDragRef.current.previewDY = dy;
+        const sel = selectionDragRef.current.startSel;
+        if (sel) {
+          const visXOld = ((sel.x + oldDX - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+          const visXNew = ((sel.x + dx - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+          // mark both old and new rectangles dirty; handle wrap by splitting if needed
+          const markSel = (visX: number, y: number, w: number, h: number) => {
+            const pxStart = visX * TILE_W;
+            const pxW = w * TILE_W;
+            markDirtyRect(pxStart, y * TILE_H, pxW, h * TILE_H);
+          };
+          markSel(visXOld, sel.y, sel.w, sel.h);
+          markSel(visXNew, sel.y, sel.w, sel.h);
+        }
         if (!selectionRafPendingRef.current) {
           selectionRafPendingRef.current = true;
           requestAnimationFrame(() => {
@@ -994,8 +1138,9 @@ export default function Page() {
       const dy = st.previewDY;
       if (dx !== 0 || dy !== 0) {
         const src = st.startSel;
-        setTiles(prev => {
-          const next = prev.slice();
+        {
+          const prevTiles = tilesRef.current;
+          const next = prevTiles.slice();
 
           const temp: Uint8Array[] = [];
           for (let j = 0; j < src.h; j++) {
@@ -1030,9 +1175,15 @@ export default function Page() {
             }
           }
 
+          tilesRef.current = next;
+          scheduleRedraw();
+          // mark source and destination rectangles dirty
+          const visSrcX = ((src.x - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+          markDirtyRect(visSrcX * TILE_W, src.y * TILE_H, src.w * TILE_W, src.h * TILE_H);
+          const visDstX = ((dstX - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+          markDirtyRect(visDstX * TILE_W, dstY * TILE_H, src.w * TILE_W, src.h * TILE_H);
           setSelection({ x: dstX, y: dstY, w: src.w, h: src.h });
-          return next;
-        });
+        }
         setIsDirty(true);
       }
     }
@@ -1061,14 +1212,14 @@ export default function Page() {
       for (let ty = 0; ty < h; ty++) {
         for (let tx = 0; tx < w; tx++) {
           const srcIndex = getTileIndex(x + tx, y + ty, tilesPerRow);
-          if (srcIndex >= 0 && srcIndex < tiles.length) {
-            tilesToExport.push(new Uint8Array(tiles[srcIndex]));
+          if (srcIndex >= 0 && srcIndex < tilesRef.current.length) {
+            tilesToExport.push(new Uint8Array(tilesRef.current[srcIndex]));
           }
         }
       }
     } else {
       // Exportar todos
-      tilesToExport = tiles;
+      tilesToExport = tilesRef.current;
     }
 
     const out = new Uint8Array(tilesToExport.length * codecDef.bytesPerTile);
@@ -1092,14 +1243,14 @@ export default function Page() {
   }
 
   function collectTilesForExport(): { tiles: Uint8Array[]; tilesPerRowExp: number } {
-    if (!selection) return { tiles, tilesPerRowExp: tilesPerRow };
+    if (!selection) return { tiles: tilesRef.current, tilesPerRowExp: tilesPerRow };
 
     const { x, y, w, h } = selection;
     const picked: Uint8Array[] = [];
     for (let ty = 0; ty < h; ty++) {
       for (let tx = 0; tx < w; tx++) {
         const idx = getTileIndex(x + tx, y + ty, tilesPerRow);
-        if (idx >= 0 && idx < tiles.length) picked.push(new Uint8Array(tiles[idx]));
+        if (idx >= 0 && idx < tilesRef.current.length) picked.push(new Uint8Array(tilesRef.current[idx]));
       }
     }
     return { tiles: picked, tilesPerRowExp: w };
@@ -1268,7 +1419,9 @@ export default function Page() {
     setFileName("untitled.bin");
     const blank = createBlankFile(16 * 16, codec);
     setRawBytes(blank);
-    setTiles([]);
+    tilesRef.current = [];
+    setTilesCount(0);
+    markFullRedraw();
     setBaseOffsetHex("0");
     // Reset view and decode params per spec
     setTileStrideBytes(16); // stride fixo 16 bytes
@@ -1491,24 +1644,27 @@ export default function Page() {
               console.log("[PNG] tiles:", { count: newTiles.length, tilesX, tilesY });
 
               if (selection && selection.w === tilesX && selection.h === tilesY) {
-                setTiles(prev => {
-                  const next = prev.slice();
-                  let k = 0;
-                  for (let j = 0; j < selection.h; j++) {
-                    for (let i2 = 0; i2 < selection.w; i2++) {
-                      const idx = (selection.y + j) * tilesPerRow + (selection.x + i2);
-                      if (idx >= 0 && idx < next.length) next[idx] = new Uint8Array(newTiles[k++]);
-                    }
+                const next = tilesRef.current.slice();
+                let k = 0;
+                for (let j = 0; j < selection.h; j++) {
+                  for (let i2 = 0; i2 < selection.w; i2++) {
+                    const idx = (selection.y + j) * tilesPerRow + (selection.x + i2);
+                    if (idx >= 0 && idx < next.length) next[idx] = new Uint8Array(newTiles[k++]);
                   }
-                  return next;
-                });
+                }
+                tilesRef.current = next;
+                const visX = ((selection.x - (columnShift % Math.max(1, tilesPerRow))) + tilesPerRow) % tilesPerRow;
+                markDirtyRect(visX * TILE_W, selection.y * TILE_H, selection.w * TILE_W, selection.h * TILE_H);
               } else {
-                setTiles(newTiles);
+                tilesRef.current = newTiles;
+                setTilesCount(newTiles.length);
                 setTilesPerRow(tilesX);
                 setViewportTilesX(Math.max(viewportTilesX, tilesX));
                 setViewportTilesY(Math.max(viewportTilesY, tilesY));
                 setSelection(null);
               }
+
+              scheduleRedraw();
 
               setIsDirty(true);
               alert(`Imported ${tilesX}×${tilesY} tiles from PNG.`);
@@ -1652,7 +1808,7 @@ export default function Page() {
           setBaseOffsetHex={setBaseOffsetHex}
           tileStrideBytes={tileStrideBytes}
           setTileStrideBytes={setTileStrideBytes}
-          tilesCount={tiles.length}
+          tilesCount={tilesCount}
           onResizeTiles={resizeTiles}
           tilesPerRow={tilesPerRow}
           setTilesPerRow={setTilesPerRow}
@@ -1681,13 +1837,13 @@ export default function Page() {
           onDeletePalette={deletePalette}
           onImportPalette={importPalette}
           onResetPalettes={resetPalettesToDefaults}
-          onTileBack={() => setColumnShift(s => { const mod = Math.max(1, tilesPerRow); const next = (s + 1) % mod; try { console.log('[TileBravo][Nav] TileBack', { prev: s, next }); } catch { } return next; })}
-          onTileForward={() => setColumnShift(s => { const mod = Math.max(1, tilesPerRow); const next = (s - 1 + mod) % mod; try { console.log('[TileBravo][Nav] TileForward', { prev: s, next }); } catch { } return next; })}
+          onTileBack={() => setColumnShift(s => { const mod = Math.max(1, tilesPerRow); const next = (s + 1) % mod; try { console.log('[TileBravo][Nav] TileBack', { prev: s, next }); } catch { } markFullRedraw(); return next; })}
+          onTileForward={() => setColumnShift(s => { const mod = Math.max(1, tilesPerRow); const next = (s - 1 + mod) % mod; try { console.log('[TileBravo][Nav] TileForward', { prev: s, next }); } catch { } markFullRedraw(); return next; })}
           onGoToOffset={(ofs) => {
             const base = parseInt(baseOffsetHex || "0", 16) || 0;
             const stride = Math.max(CODECS[codec].bytesPerTile, tileStrideBytes | 0);
             const idx = Math.max(0, Math.floor((ofs - base) / stride));
-            const clamped = Math.min(Math.max(0, idx), Math.max(0, tiles.length - 1));
+            const clamped = Math.min(Math.max(0, idx), Math.max(0, tilesCount - 1));
             const tx = clamped % tilesPerRow;
             const ty = Math.floor(clamped / tilesPerRow);
             setColumnShift(tx % Math.max(1, tilesPerRow));
@@ -1712,6 +1868,7 @@ export default function Page() {
             } else {
               try { console.log('[TileBravo][Nav] No viewport ref available'); } catch { }
             }
+            markFullRedraw();
           }}
           setGoToOpener={(fn) => { openGoToRef.current = fn; }}
         />

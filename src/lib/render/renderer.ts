@@ -66,6 +66,101 @@ export function drawTiles(
 }
 
 /**
+ * Desenha somente a região (em pixels absolutos) informada.
+ * Não redimensiona o canvas. Assume que o tamanho já está correto.
+ */
+export function drawTilesRegion(
+  ctx: CanvasRenderingContext2D,
+  tiles: Uint8Array[],
+  palette: string[],
+  tilesPerRow: number,
+  pixelSize: number,
+  columnShift: number,
+  ax: number,
+  ay: number,
+  aw: number,
+  ah: number
+): void {
+  const totalTiles = tiles.length;
+  if (totalTiles === 0 || aw <= 0 || ah <= 0) return;
+
+  const rows = Math.max(1, Math.ceil(totalTiles / Math.max(1, tilesPerRow)));
+
+  // Clipping e limpeza apenas da área suja
+  const xpx = Math.max(0, Math.floor(ax * pixelSize));
+  const ypx = Math.max(0, Math.floor(ay * pixelSize));
+  const wpx = Math.ceil(aw * pixelSize);
+  const hpx = Math.ceil(ah * pixelSize);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(xpx, ypx, wpx, hpx);
+  ctx.clip();
+  ctx.clearRect(xpx, ypx, wpx, hpx);
+
+  const colShift = columnShift % Math.max(1, tilesPerRow);
+
+  // Tiles que intersectam a região
+  const minTX = Math.max(0, Math.floor(ax / TILE_W));
+  const maxTX = Math.min(tilesPerRow - 1, Math.floor((ax + aw - 1) / TILE_W));
+  const minTY = Math.max(0, Math.floor(ay / TILE_H));
+  const maxTY = Math.min(rows - 1, Math.floor((ay + ah - 1) / TILE_H));
+
+  for (let ty = minTY; ty <= maxTY; ty++) {
+    for (let tx = minTX; tx <= maxTX; tx++) {
+      const i = ty * tilesPerRow + tx;
+      if (i < 0 || i >= totalTiles) continue;
+      const tile = tiles[i];
+      if (!tile) continue;
+
+      // posição visual considerando columnShift
+      const visX = ((tx - colShift) + tilesPerRow) % tilesPerRow;
+      const tileAx = visX * TILE_W;
+      const tileAy = ty * TILE_H;
+
+      // Interseção em pixels (absolutos) dentro da tile
+      const x1 = Math.max(ax, tileAx);
+      const y1 = Math.max(ay, tileAy);
+      const x2 = Math.min(ax + aw, tileAx + TILE_W);
+      const y2 = Math.min(ay + ah, tileAy + TILE_H);
+      if (x2 <= x1 || y2 <= y1) continue;
+
+      const pxStart = x1 - tileAx;
+      const pxEnd = x2 - tileAx; // exclusivo
+      const pyStart = y1 - tileAy;
+      const pyEnd = y2 - tileAy; // exclusivo
+
+      for (let py = pyStart; py < pyEnd; py++) {
+        // run-length dentro da janela pxStart..pxEnd
+        let runColor = -1;
+        let runBeg = pxStart;
+        for (let px = pxStart; px < pxEnd; px++) {
+          const val = tile[py * TILE_W + px] | 0;
+          if (px === pxStart) { runColor = val; runBeg = pxStart; continue; }
+          if (val !== runColor) {
+            ctx.fillStyle = palette[runColor] || "#FF00FF";
+            const rx = (tileAx + runBeg) * pixelSize;
+            const ry = (tileAy + py) * pixelSize;
+            const rw = (px - runBeg) * pixelSize;
+            ctx.fillRect(rx, ry, rw, pixelSize);
+            runColor = val;
+            runBeg = px;
+          }
+        }
+        // flush último run
+        ctx.fillStyle = palette[runColor] || "#FF00FF";
+        const rx = (tileAx + runBeg) * pixelSize;
+        const ry = (tileAy + py) * pixelSize;
+        const rw = (pxEnd - runBeg) * pixelSize;
+        ctx.fillRect(rx, ry, rw, pixelSize);
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+/**
  * Desenha grid.
  * - kind = "tile": grade nas fronteiras de tiles (traço duplo preto/branco).
  * - kind = "pixel": grade em cada pixel (linhas sutis e finas).
@@ -308,4 +403,129 @@ export function renderCanvas(
       params.selectionPreview?.dy ?? 0
     );
   }
+}
+
+/**
+ * Versão recortada do render: redesenha apenas uma região em pixels absolutos.
+ */
+export function renderCanvasRegion(
+  ctx: CanvasRenderingContext2D,
+  params: {
+    tiles: Uint8Array[];
+    palette: string[];
+    tilesPerRow: number;
+    pixelSize: number;
+    columnShift?: number;
+    showTileGrid?: boolean;
+    showPixelGrid?: boolean;
+    selection?: SelectionRect | null;
+    selectionPreview?: { dx: number; dy: number } | null;
+    linePreview?: { ax1: number; ay1: number; ax2: number; ay2: number; colorIndex: number } | null;
+  },
+  rect: { ax: number; ay: number; aw: number; ah: number }
+): void {
+  const rows = Math.max(1, Math.ceil(params.tiles.length / Math.max(1, params.tilesPerRow)));
+
+  // pixels da região
+  const ps = Math.max(1, params.pixelSize);
+  const xpx = Math.max(0, Math.floor(rect.ax * ps));
+  const ypx = Math.max(0, Math.floor(rect.ay * ps));
+  const wpx = Math.ceil(rect.aw * ps);
+  const hpx = Math.ceil(rect.ah * ps);
+
+  // Clip região e redesenha apenas o necessário
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(xpx, ypx, wpx, hpx);
+  ctx.clip();
+  ctx.clearRect(xpx, ypx, wpx, hpx);
+
+  drawTilesRegion(
+    ctx,
+    params.tiles,
+    params.palette,
+    Math.max(1, params.tilesPerRow),
+    ps,
+    params.columnShift ?? 0,
+    rect.ax,
+    rect.ay,
+    rect.aw,
+    rect.ah
+  );
+
+  // Grids dentro do recorte
+  if (params.showTileGrid || params.showPixelGrid) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xpx, ypx, wpx, hpx);
+    ctx.clip();
+    if (params.showTileGrid) drawGrid(ctx, Math.max(1, params.tilesPerRow), rows, ps, "tile");
+    if (params.showPixelGrid) drawGrid(ctx, Math.max(1, params.tilesPerRow), rows, ps, "pixel");
+    ctx.restore();
+  }
+
+  // Ghost da seleção e linha — também recortados
+  if (params.selection && params.selectionPreview) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xpx, ypx, wpx, hpx);
+    ctx.clip();
+    const { x, y, w, h } = params.selection;
+    const { dx, dy } = params.selectionPreview;
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const srcIndex = (y + j) * params.tilesPerRow + (x + i);
+        if (srcIndex < 0 || srcIndex >= params.tiles.length) continue;
+        const tile = params.tiles[srcIndex];
+        if (!tile) continue;
+        const dstX = (x + i + dx) * TILE_W * ps;
+        const dstY = (y + j + dy) * TILE_H * ps;
+        for (let py = 0; py < TILE_H; py++) {
+          for (let px = 0; px < TILE_W; px++) {
+            const v = tile[py * TILE_W + px];
+            ctx.fillStyle = params.palette[v] || "#FF00FF";
+            ctx.fillRect(dstX + px * ps, dstY + py * ps, ps, ps);
+          }
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  if (params.linePreview) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xpx, ypx, wpx, hpx);
+    ctx.clip();
+    const { ax1, ay1, ax2, ay2, colorIndex } = params.linePreview;
+    const color = params.palette[colorIndex] || "#FF00FF";
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = color;
+    let x1 = ax1, y1 = ay1;
+    const x2 = ax2, y2 = ay2;
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    const sx = x1 < x2 ? 1 : -1;
+    const sy = y1 < y2 ? 1 : -1;
+    let err = dx - dy;
+    for (;;) {
+      ctx.fillRect(x1 * ps, y1 * ps, ps, ps);
+      if (x1 === x2 && y1 === y2) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x1 += sx; }
+      if (e2 < dx) { err += dx; y1 += sy; }
+    }
+    ctx.restore();
+  }
+
+  if (params.selection) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xpx, ypx, wpx, hpx);
+    ctx.clip();
+    drawSelection(ctx, params.selection, ps, params.selectionPreview?.dx ?? 0, params.selectionPreview?.dy ?? 0);
+    ctx.restore();
+  }
+
+  ctx.restore();
 }

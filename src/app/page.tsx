@@ -226,7 +226,8 @@ export default function Page() {
       const base = viewOffset > 0 ? viewOffset : 0;
       const padCount = viewOffset < 0 ? -viewOffset : 0;
       const tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
-      const blank = new Uint8Array(TILE_W * TILE_H);
+      // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
+      const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
       let tilesToRender = padCount > 0 ? [...Array(padCount)].map(() => blank).concat(tail) : tail;
       const emptySet = new Set<number>();
       for (let i = 0; i < padCount; i++) emptySet.add(i);
@@ -294,7 +295,8 @@ export default function Page() {
       const base = viewOffset > 0 ? viewOffset : 0;
       const padCount = viewOffset < 0 ? -viewOffset : 0;
       const tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
-      const blank = new Uint8Array(TILE_W * TILE_H);
+      // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
+      const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
       let tilesToRender = padCount > 0 ? [...Array(padCount)].map(() => blank).concat(tail) : tail;
       const emptySet = new Set<number>();
       for (let i = 0; i < padCount; i++) emptySet.add(i);
@@ -1967,6 +1969,7 @@ export default function Page() {
             setSelection({ x: 0, y: 0, w: 1, h: 1 });
             const ps = Math.max(1, pixelSize);
             const xpx = 0;
+            const ty = Math.floor(clamped / Math.max(1, tilesPerRow));
             const ypx = ty * TILE_H * ps;
             const vp = innerViewportRef.current || viewportRef.current;
             const outer = viewportRef.current;

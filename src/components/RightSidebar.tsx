@@ -65,7 +65,6 @@ export default function RightSidebar(props: Props) {
       setGoToOpener(() => {
         if (navDetailsRef.current) {
           navDetailsRef.current.open = true;
-          persistOpenState();
         }
         gotoInputRef.current?.focus();
         gotoInputRef.current?.select();

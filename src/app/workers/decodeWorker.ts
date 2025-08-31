@@ -40,9 +40,9 @@ self.onmessage = function (ev: MessageEvent<Req>) {
       out.set(tiles[i], i * tileSize);
     }
     const res: Res = { pixelsBuffer: out.buffer, tilesCount: tiles.length };
-    (self as any).postMessage(res, [out.buffer]);
-  } catch (err) {
+    self.postMessage(res, [out.buffer as ArrayBuffer]);
+  } catch {
     // Let main thread fallback
-    (self as any).postMessage({ pixelsBuffer: new ArrayBuffer(0), tilesCount: 0 });
+    self.postMessage({ pixelsBuffer: new ArrayBuffer(0), tilesCount: 0 });
   }
 };

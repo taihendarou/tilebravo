@@ -4,7 +4,7 @@ import React, { useRef } from "react";
 import PalettePanel from "./PalettePanel";
 import { CODECS } from "../lib/codecs";
 import type { CodecId } from "../lib/codecs";
-import { ChevronLeft, ChevronRight, Download, Plus, Copy, Upload, Trash, RotateCcw, ChevronDown, GripVertical } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Plus, Copy, Upload, Trash, RotateCcw, ChevronDown } from "lucide-react";
 
 interface Props {
   codec: CodecId;

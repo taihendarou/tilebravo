@@ -21,7 +21,7 @@ const THEMES: Theme[] = ["light", "dark", "navy"];
 export default function StatusBar({ tileOffsetHex, pixelOffsetHex, pixelColorHex, pixelColorIndex, selectionSize, zoomPercent }: Props) {
   const [theme, setTheme] = useState<Theme>("dark");
   const [showAbout, setShowAbout] = useState(false);
-  const version = (pkg as any)?.version as string | undefined;
+  const version = (pkg as { version?: string })?.version;
   const isBeta = typeof version === "string" && version.includes("-beta")
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);

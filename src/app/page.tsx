@@ -34,6 +34,109 @@ function getTileIndex(tx: number, ty: number, tilesPerRow: number) {
   return ty * tilesPerRow + tx;
 }
 
+// Helpers de paleta fora do componente (identidade estável)
+function defaultPalettesFor(n: number): PaletteDef[] {
+  const makeGrayscale = (k: number): string[] =>
+    Array.from({ length: k }, (_, i) => {
+      const t = k === 1 ? 0 : i / (k - 1);
+      const v = Math.round(255 * t).toString(16).padStart(2, "0");
+      return `#${v}${v}${v}`.toUpperCase();
+    });
+  const gradient = (k: number, from: [number, number, number], to: [number, number, number]): string[] =>
+    Array.from({ length: k }, (_, i) => {
+      const t = k === 1 ? 0 : i / (k - 1);
+      const r = Math.round(from[0] + (to[0] - from[0]) * t);
+      const g = Math.round(from[1] + (to[1] - from[1]) * t);
+      const b = Math.round(from[2] + (to[2] - from[2]) * t);
+      const hx = (x: number) => x.toString(16).padStart(2, "0");
+      return `#${hx(r)}${hx(g)}${hx(b)}`.toUpperCase();
+    });
+  const reverse = (arr: string[]) => arr.slice().reverse();
+  const clampN = (arr: string[]) => arr.slice(0, n);
+
+  if (n <= 4) {
+    const gray = makeGrayscale(4);
+    return [
+      { name: "Grayscale", colors: clampN(gray) },
+      { name: "Grayscale Inverted", colors: clampN(reverse(gray)) },
+      { name: "GameBoy", colors: clampN(["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"]) },
+      { name: "Primary Contrast", colors: clampN(["#000000", "#FF0000", "#00FF00", "#0000FF"]) },
+      { name: "Blue/Orange", colors: clampN(["#0B1E3B", "#E76F51", "#2A9D8F", "#FFFFFF"]) },
+    ];
+  }
+  if (n <= 16) {
+    const gray16 = makeGrayscale(16);
+    const cool = gradient(16, [10, 20, 60], [180, 220, 255]);
+    const warm = gradient(16, [60, 20, 10], [255, 220, 180]);
+    const rainbow = Array.from({ length: 16 }, (_, i) => {
+      const h = (i / 16) * 360;
+      const s = 90, v = 95;
+      const c = (v / 100) * (s / 100);
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = (v / 100) - c;
+      let r = 0, g = 0, b = 0;
+      if (h < 60) { r = c; g = x; b = 0; }
+      else if (h < 120) { r = x; g = c; b = 0; }
+      else if (h < 180) { r = 0; g = c; b = x; }
+      else if (h < 240) { r = 0; g = x; b = c; }
+      else if (h < 300) { r = x; g = 0; b = c; }
+      else { r = c; g = 0; b = x; }
+      const toHex = (f: number) => Math.round((f + m) * 255).toString(16).padStart(2, "0");
+      return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+    });
+    return [
+      { name: "Grayscale", colors: gray16.slice(0, n) },
+      { name: "Grayscale Inverted", colors: reverse(gray16).slice(0, n) },
+      { name: "Rainbow", colors: rainbow.slice(0, n) },
+      { name: "Cool → Light", colors: cool.slice(0, n) },
+      { name: "Warm ← Dark", colors: reverse(warm).slice(0, n) },
+    ];
+  }
+  return [{ name: "Grayscale", colors: makeGrayscale(n) }];
+}
+
+// Auxiliares de imagem/paleta (puros, fora do componente)
+type RGB = [number, number, number];
+function hexToRgb(hex: string): RGB {
+  const h = hex.startsWith("#") ? hex.slice(1) : hex;
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function dist2(a: RGB, b: RGB) {
+  const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
+  return dr * dr + dg * dg + db * db;
+}
+function imageDataToTilesByPalette(img: ImageData, paletteHex: string[]) {
+  const w = img.width, h = img.height, data = img.data;
+  const pal = paletteHex.map(hexToRgb);
+  const pixels = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const o = i * 4, a = data[o + 3];
+    if (a < 128) { pixels[i] = 0; continue; }
+    const r = data[o], g = data[o + 1], b = data[o + 2];
+    let best = 0, bestD = Infinity;
+    for (let p = 0; p < pal.length; p++) {
+      const d = dist2([r, g, b], pal[p]);
+      if (d < bestD) { bestD = d; best = p; if (d === 0) break; }
+    }
+    pixels[i] = best;
+  }
+  const tilesX = w / 8, tilesY = h / 8;
+  const tiles: Uint8Array[] = [];
+  for (let ty = 0; ty < tilesY; ty++) {
+    for (let tx = 0; tx < tilesX; tx++) {
+      const tile = new Uint8Array(64);
+      let k = 0;
+      for (let py = 0; py < 8; py++) {
+        const row = (ty * 8 + py) * w + (tx * 8);
+        for (let px = 0; px < 8; px++) tile[k++] = pixels[row + px];
+      }
+      tiles.push(tile);
+    }
+  }
+  return { tiles, tilesX, tilesY };
+}
+
 /** Decode genérico com stride usando o codec selecionado. */
 function decodeWithStride(
   bytes: Uint8Array,
@@ -216,74 +319,62 @@ export default function Page() {
       setTiles([]);
       return;
     }
-    reDecode();
-  }, [rawBytes, codec]);
-
-  // Helpers de paleta
-  function makeGrayscale(n: number): string[] {
-    return Array.from({ length: n }, (_, i) => {
-      const t = n === 1 ? 0 : i / (n - 1);
-      const v = Math.round(255 * t).toString(16).padStart(2, "0");
-      return `#${v}${v}${v}`.toUpperCase();
-    });
-  }
-  function gradient(n: number, from: [number, number, number], to: [number, number, number]): string[] {
-    return Array.from({ length: n }, (_, i) => {
-      const t = n === 1 ? 0 : i / (n - 1);
-      const r = Math.round(from[0] + (to[0] - from[0]) * t);
-      const g = Math.round(from[1] + (to[1] - from[1]) * t);
-      const b = Math.round(from[2] + (to[2] - from[2]) * t);
-      const hx = (x: number) => x.toString(16).padStart(2, "0");
-      return `#${hx(r)}${hx(g)}${hx(b)}`.toUpperCase();
-    });
-  }
-  function defaultPalettesFor(n: number): PaletteDef[] {
-    // helpers
-    const reverse = (arr: string[]) => arr.slice().reverse();
-    const clampN = (arr: string[]) => arr.slice(0, n);
-
-    if (n <= 4) {
-      const gray = makeGrayscale(4);
-      return [
-        { name: "Grayscale", colors: clampN(gray) },
-        { name: "Grayscale Inverted", colors: clampN(reverse(gray)) },
-        { name: "GameBoy", colors: clampN(["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"]) },
-        { name: "Primary Contrast", colors: clampN(["#000000", "#FF0000", "#00FF00", "#0000FF"]) },
-        { name: "Blue/Orange", colors: clampN(["#0B1E3B", "#E76F51", "#2A9D8F", "#FFFFFF"]) },
-      ];
+    const baseOffset = parseInt(baseOffsetHex || "0", 16);
+    const stride = Math.max(CODECS[codec].bytesPerTile, tileStrideBytes | 0);
+    try {
+      const worker = new Worker(new URL("../workers/decodeWorker.ts", import.meta.url), { type: "module" });
+      const bytesBuffer = rawBytes.buffer.slice(0);
+      worker.onmessage = (ev: MessageEvent<{ pixelsBuffer: ArrayBuffer; tilesCount: number }>) => {
+        const { pixelsBuffer, tilesCount } = ev.data;
+        const pixels = new Uint8Array(pixelsBuffer);
+        const tileSize = TILE_W * TILE_H;
+        const out: Uint8Array[] = new Array(tilesCount);
+        for (let i = 0; i < tilesCount; i++) {
+          out[i] = pixels.subarray(i * tileSize, (i + 1) * tileSize);
+        }
+        setTiles(out);
+        worker.terminate();
+        const endAt = loadingMinEndAtRef.current;
+        if (isLoading && endAt) {
+          const remain = Math.max(0, endAt - Date.now());
+          setTimeout(() => setIsLoading(false), remain);
+          loadingMinEndAtRef.current = null;
+        }
+      };
+      worker.onerror = () => {
+        worker.terminate();
+        const decoded = decodeWithStride(
+          rawBytes,
+          isNaN(baseOffset) ? 0 : baseOffset,
+          stride,
+          codec
+        );
+        setTiles(decoded);
+        const endAt = loadingMinEndAtRef.current;
+        if (isLoading && endAt) {
+          const remain = Math.max(0, endAt - Date.now());
+          setTimeout(() => setIsLoading(false), remain);
+          loadingMinEndAtRef.current = null;
+        }
+      };
+      worker.postMessage({ bytesBuffer, baseOffset: isNaN(baseOffset) ? 0 : baseOffset, stride, codec });
+    } catch {
+      const decoded = decodeWithStride(
+        rawBytes,
+        isNaN(baseOffset) ? 0 : baseOffset,
+        stride,
+        codec
+      );
+      setTiles(decoded);
+      const endAt = loadingMinEndAtRef.current;
+      if (isLoading && endAt) {
+        const remain = Math.max(0, endAt - Date.now());
+        setTimeout(() => setIsLoading(false), remain);
+        loadingMinEndAtRef.current = null;
+      }
     }
-    // 16 cores
-    if (n <= 16) {
-      const gray16 = makeGrayscale(16);
-      const cool = gradient(16, [10, 20, 60], [180, 220, 255]);
-      const warm = gradient(16, [60, 20, 10], [255, 220, 180]);
-      const rainbow = Array.from({ length: 16 }, (_, i) => {
-        const h = (i / 16) * 360;
-        const s = 90, v = 95;
-        const c = (v / 100) * (s / 100);
-        const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-        const m = (v / 100) - c;
-        let r = 0, g = 0, b = 0;
-        if (h < 60) { r = c; g = x; b = 0; }
-        else if (h < 120) { r = x; g = c; b = 0; }
-        else if (h < 180) { r = 0; g = c; b = x; }
-        else if (h < 240) { r = 0; g = x; b = c; }
-        else if (h < 300) { r = x; g = 0; b = c; }
-        else { r = c; g = 0; b = x; }
-        const toHex = (f: number) => Math.round((f + m) * 255).toString(16).padStart(2, "0");
-        return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
-      });
-      return [
-        { name: "Grayscale", colors: gray16.slice(0, n) },
-        { name: "Grayscale Inverted", colors: reverse(gray16).slice(0, n) },
-        { name: "Rainbow", colors: rainbow.slice(0, n) },
-        { name: "Cool → Light", colors: cool.slice(0, n) },
-        { name: "Warm ← Dark", colors: reverse(warm).slice(0, n) },
-      ];
-    }
-    // fallback generic
-    return [{ name: "Grayscale", colors: makeGrayscale(n) }];
-  }
+  }, [rawBytes, codec, baseOffsetHex, tileStrideBytes]);
+
 
   // Inicializar paletas a partir do codec/prefs
   useEffect(() => {
@@ -320,21 +411,33 @@ export default function Page() {
   }, [codec]);
 
   // atalhos. Cmd/Ctrl+C/V já existem abaixo. Aqui 1..4 e B, V, I.
+  // Contexto estável para atalhos de teclado (evita recriar listener)
+  const keyCtxRef = useRef({
+    paletteLen: 0,
+    selection: null as Selection,
+    tilesPerRow: 0,
+    tiles: [] as Uint8Array[],
+    isViewportFocused: false,
+  });
+  useEffect(() => { keyCtxRef.current.paletteLen = palette.length; }, [palette.length]);
+  useEffect(() => { keyCtxRef.current.selection = selection; }, [selection]);
+  useEffect(() => { keyCtxRef.current.tilesPerRow = tilesPerRow; }, [tilesPerRow]);
+  useEffect(() => { keyCtxRef.current.tiles = tiles; }, [tiles]);
+  useEffect(() => { keyCtxRef.current.isViewportFocused = isViewportFocused; }, [isViewportFocused]);
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // não capturar quando o foco estiver em inputs
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
-        return;
-      }
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+
+      const ctx = keyCtxRef.current;
+      const meta = e.metaKey || e.ctrlKey;
 
       // 0..9 escolhe cor
       const num = parseInt(e.key, 10);
-      if (!isNaN(num) && num >= 0 && num <= 9 && num < palette.length) {
+      if (!isNaN(num) && num >= 0 && num <= 9 && num < ctx.paletteLen) {
         setCurrentColor(num);
       }
 
-      // atalhos de ferramenta sem modificadores
       if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === "b") { setTool("pencil"); e.preventDefault(); return; }
@@ -344,55 +447,41 @@ export default function Page() {
         if (k === "g") { setTool("bucket"); e.preventDefault(); return; }
       }
 
-      // Zoom in / out
-      if (e.key === "=" || e.key === "+") {
-        setPixelSize((p) => Math.max(1, Math.min(64, (p || 1) + 1)));
-        e.preventDefault();
-      }
-      if (e.key === "-" || e.key === "_") {
-        setPixelSize((p) => Math.max(1, Math.min(64, (p || 1) - 1)));
-        e.preventDefault();
-      }
+      // Zoom
+      if (e.key === "=" || e.key === "+") { setPixelSize(p => Math.max(1, Math.min(64, (p || 1) + 1))); e.preventDefault(); }
+      if (e.key === "-" || e.key === "_") { setPixelSize(p => Math.max(1, Math.min(64, (p || 1) - 1))); e.preventDefault(); }
 
-      // copiar
-      const meta = e.metaKey || e.ctrlKey;
-      // Go to dialog
-      if (meta && e.key.toLowerCase() === "g") {
-        e.preventDefault();
-        openGoToRef.current?.();
-        return;
-      }
+      // Go to
+      if (meta && e.key.toLowerCase() === "g") { e.preventDefault(); openGoToRef.current?.(); return; }
+
+      // Copiar
       if (meta && e.key.toLowerCase() === "c") {
-        if (!selection) return;
-        const { x, y, w, h } = selection;
+        const sel = ctx.selection;
+        if (!sel) return;
+        const { x, y, w, h } = sel;
         const copied: Uint8Array[] = [];
         for (let ty = 0; ty < h; ty++) {
           for (let tx = 0; tx < w; tx++) {
-            const idx = (y + ty) * tilesPerRow + (x + tx);
-            if (idx >= 0 && idx < tiles.length) {
-              copied.push(new Uint8Array(tiles[idx]));
-            }
+            const idx = (y + ty) * ctx.tilesPerRow + (x + tx);
+            if (idx >= 0 && idx < ctx.tiles.length) copied.push(new Uint8Array(ctx.tiles[idx]));
           }
         }
         clipboardRef.current = { tiles: copied, w, h };
         e.preventDefault();
       }
 
-      // colar só quando o viewport estiver focado
+      // Colar
       if (meta && e.key.toLowerCase() === "v") {
-        if (!isViewportFocused) return;
-        const clip = clipboardRef.current;
-        if (!clip) return;
-        const targetX = selection ? selection.x : 0;
-        const targetY = selection ? selection.y : 0;
+        if (!ctx.isViewportFocused) return;
+        const clip = clipboardRef.current; if (!clip) return;
+        const sel = ctx.selection; const targetX = sel ? sel.x : 0; const targetY = sel ? sel.y : 0;
         setTiles(prev => {
           const next = prev.slice();
           for (let ty = 0; ty < clip.h; ty++) {
             for (let tx = 0; tx < clip.w; tx++) {
-              const dstX = targetX + tx;
-              const dstY = targetY + ty;
+              const dstX = targetX + tx; const dstY = targetY + ty;
               if (dstX < 0 || dstY < 0) continue;
-              const dstIndex = dstY * tilesPerRow + dstX;
+              const dstIndex = dstY * ctx.tilesPerRow + dstX;
               if (dstIndex >= 0 && dstIndex < next.length) {
                 const srcIndex = ty * clip.w + tx;
                 next[dstIndex] = new Uint8Array(clip.tiles[srcIndex]);
@@ -407,7 +496,7 @@ export default function Page() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [tiles, palette.length, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, selection, isViewportFocused]);
+  }, []);
 
   function reDecode() {
     if (!rawBytes) return;
@@ -1053,7 +1142,7 @@ export default function Page() {
       // importante: blob URL não precisa de CORS, mas vamos cobrir onload/onerror
       const loaded = new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = (_e) => reject(new Error("Failed to load image"));
+        img.onerror = () => reject(new Error("Failed to load image"));
       });
       img.src = url;
       // alguns browsers falham no decode(); preferimos onload robusto
@@ -1074,46 +1163,6 @@ export default function Page() {
   }
 
 
-  type RGB = [number, number, number];
-  const hexToRgb = (hex: string): RGB => {
-    const h = hex.startsWith("#") ? hex.slice(1) : hex;
-    const n = parseInt(h, 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  };
-  const dist2 = (a: RGB, b: RGB) => {
-    const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
-    return dr * dr + dg * dg + db * db;
-  };
-  function imageDataToTilesByPalette(img: ImageData, paletteHex: string[]) {
-    const w = img.width, h = img.height, data = img.data;
-    const pal = paletteHex.map(hexToRgb);
-    const pixels = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-      const o = i * 4, a = data[o + 3];
-      if (a < 128) { pixels[i] = 0; continue; }
-      const r = data[o], g = data[o + 1], b = data[o + 2];
-      let best = 0, bestD = Infinity;
-      for (let p = 0; p < pal.length; p++) {
-        const d = dist2([r, g, b], pal[p]);
-        if (d < bestD) { bestD = d; best = p; if (d === 0) break; }
-      }
-      pixels[i] = best;
-    }
-    const tilesX = w / 8, tilesY = h / 8;
-    const tiles: Uint8Array[] = [];
-    for (let ty = 0; ty < tilesY; ty++) {
-      for (let tx = 0; tx < tilesX; tx++) {
-        const tile = new Uint8Array(64);
-        let k = 0;
-        for (let py = 0; py < 8; py++) {
-          const row = (ty * 8 + py) * w + (tx * 8);
-          for (let px = 0; px < 8; px++) tile[k++] = pixels[row + px];
-        }
-        tiles.push(tile);
-      }
-    }
-    return { tiles, tilesX, tilesY };
-  }
 
 
 

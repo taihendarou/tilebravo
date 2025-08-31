@@ -13,7 +13,7 @@ type InMsg = {
 };
 
 type OutMsg = {
-  pixelsBuffer: ArrayBuffer;
+  pixelsBuffer: ArrayBufferLike;
   tilesCount: number;
 };
 
@@ -49,9 +49,9 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
   const { bytesBuffer, baseOffset, stride, codec } = e.data;
   const bytes = new Uint8Array(bytesBuffer);
   const { pixels, tilesCount } = decodeWithStride(bytes, baseOffset, stride, codec);
-  const msg: OutMsg = { pixelsBuffer: pixels.buffer, tilesCount };
+  const msg: OutMsg = { pixelsBuffer: pixels.buffer as ArrayBuffer, tilesCount };
   // transfer buffer para evitar cópia
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore - postMessage on WorkerGlobalScope
-  self.postMessage(msg, [pixels.buffer]);
+  self.postMessage(msg, [pixels.buffer as ArrayBuffer]);
 };

@@ -218,7 +218,9 @@ export default function Page() {
   const [columnShift, setColumnShift] = useState<number>(0);
   // Loading overlay ao abrir arquivo grande
   const [isLoading, setIsLoading] = useState(false);
+  const isLoadingRef = useRef(false);
   const loadingMinEndAtRef = useRef<number | null>(null);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
 
   // Seleção e clipboard
@@ -335,7 +337,7 @@ export default function Page() {
         setTiles(out);
         worker.terminate();
         const endAt = loadingMinEndAtRef.current;
-        if (isLoading && endAt) {
+        if (isLoadingRef.current && endAt) {
           const remain = Math.max(0, endAt - Date.now());
           setTimeout(() => setIsLoading(false), remain);
           loadingMinEndAtRef.current = null;
@@ -351,7 +353,7 @@ export default function Page() {
         );
         setTiles(decoded);
         const endAt = loadingMinEndAtRef.current;
-        if (isLoading && endAt) {
+        if (isLoadingRef.current && endAt) {
           const remain = Math.max(0, endAt - Date.now());
           setTimeout(() => setIsLoading(false), remain);
           loadingMinEndAtRef.current = null;
@@ -367,7 +369,7 @@ export default function Page() {
       );
       setTiles(decoded);
       const endAt = loadingMinEndAtRef.current;
-      if (isLoading && endAt) {
+      if (isLoadingRef.current && endAt) {
         const remain = Math.max(0, endAt - Date.now());
         setTimeout(() => setIsLoading(false), remain);
         loadingMinEndAtRef.current = null;
@@ -517,7 +519,7 @@ export default function Page() {
         setTiles(out);
         worker.terminate();
         const endAt = loadingMinEndAtRef.current;
-        if (isLoading && endAt) {
+        if (isLoadingRef.current && endAt) {
           const remain = Math.max(0, endAt - Date.now());
           setTimeout(() => setIsLoading(false), remain);
           loadingMinEndAtRef.current = null;
@@ -534,7 +536,7 @@ export default function Page() {
         );
         setTiles(decoded);
         const endAt = loadingMinEndAtRef.current;
-        if (isLoading && endAt) {
+        if (isLoadingRef.current && endAt) {
           const remain = Math.max(0, endAt - Date.now());
           setTimeout(() => setIsLoading(false), remain);
           loadingMinEndAtRef.current = null;
@@ -551,7 +553,7 @@ export default function Page() {
       );
       setTiles(decoded);
       const endAt = loadingMinEndAtRef.current;
-      if (isLoading && endAt) {
+      if (isLoadingRef.current && endAt) {
         const remain = Math.max(0, endAt - Date.now());
         setTimeout(() => setIsLoading(false), remain);
         loadingMinEndAtRef.current = null;
@@ -1321,7 +1323,14 @@ export default function Page() {
 
   function newPalette() {
     const size = palette.length || 4;
-    const p: PaletteDef = { name: "New Palette", colors: makeGrayscale(size) };
+    const p: PaletteDef = {
+      name: "New Palette",
+      colors: (defaultPalettesFor(size)[0]?.colors) ?? Array.from({ length: size }, (_, i) => {
+        const t = size === 1 ? 0 : i / (size - 1);
+        const v = Math.round(255 * t).toString(16).padStart(2, "0");
+        return `#${v}${v}${v}`.toUpperCase();
+      }),
+    };
     setPalettes(prev => {
       const out = prev.slice();
       out.splice(currentPaletteIndex + 1, 0, p);

@@ -38,42 +38,61 @@ export default function Toolbox({
   return (
     <aside className="border-r border-border p-2 flex flex-col items-center gap-2 bg-background text-foreground">
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSelectTool("select")}
         className={btn(tool === "select")}
         title="Selector (V)"
         aria-label="Selector"
+        aria-pressed={tool === "select"}
       >
         <MousePointer size={18} />
       </button>
 
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSelectTool("pencil")}
         className={btn(tool === "pencil")}
         title="Pencil (B)"
         aria-label="Pencil"
+        aria-pressed={tool === "pencil"}
       >
         <Pencil size={18} />
       </button>
 
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSelectTool("line")}
         className={btn(tool === "line")}
         title="Line (L)"
         aria-label="Line"
+        aria-pressed={tool === "line"}
       >
         <Slash size={18} />
       </button>
 
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSelectTool("bucket")}
         className={btn(tool === "bucket")}
         title="Paint Bucket (G)"
         aria-label="Paint Bucket"
+        aria-pressed={tool === "bucket"}
       >
         <PaintBucket size={18} />
       </button>
 
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={onZoomIn}
         className="w-10 h-10 border border-border rounded flex items-center justify-center bg-surface hover:bg-muted"
         title="Zoom in (+ / =)"
@@ -83,6 +102,9 @@ export default function Toolbox({
       </button>
 
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={onZoomOut}
         className="w-10 h-10 border border-border rounded flex items-center justify-center bg-surface hover:bg-muted"
         title="Zoom out (-)"
@@ -92,10 +114,14 @@ export default function Toolbox({
       </button>
 
       <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => onSelectTool("eyedropper")}
         className={btn(tool === "eyedropper")}
         title="Eyedropper (I)"
         aria-label="Eyedropper"
+        aria-pressed={tool === "eyedropper"}
       >
         <Pipette size={18} />
       </button>

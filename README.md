@@ -1,6 +1,6 @@
 # TileBravo (Beta)
 
-Version: v0.3.0-beta.1
+Version: v0.3.1-beta.1 [Changelog](./CHANGELOG.md)
 
 TileBravo is a tile editor created for ROM hacking and translation of classic tile‑based games — an alternative/complement to editors like Tile Molester and YY‑CHR.
 
@@ -16,15 +16,7 @@ TileBravo is a tile editor created for ROM hacking and translation of classic ti
 - Manage palettes (new, duplicate, import/export).
 - Use the status bar to inspect offsets and change theme.
 
-## Last features (v0.3.0-beta.1)
-
-- Multiple codecs (2bpp planar, 4bpp planar, 2bpp planar composite, 4bpp chunky zip16).
-- Palette editing (create, duplicate, import/export) and color picking.
-- Tools: selection, pencil, eyedropper, line, bucket.
-- Linear tile stepping (view-only), zoom, tile/pixel grid overlays.
-- Import PNG (multiples of 8 px); export BIN; PNG export for previews.
-
-## Features for next release
+## Planned for Next Release
 
 - New codecs
 - Byte stepping (navigate by byte offset)
@@ -33,6 +25,18 @@ TileBravo is a tile editor created for ROM hacking and translation of classic ti
 - New themes
 - Full user and features documentation
 - Undo feature (Ctrl/CMD + Z)
+
+## Future Work (TBD)
+
+- Select colors from the palette by clicking on them in the toolbar
+- Support for primary and secondary colors in editing (use right-click to apply tools with the secondary color)
+- Improve copy/paste functionality (paste and move)
+- Copy/paste between different tabs
+- Import BIN and PNG blocks (without replacing the entire file)
+- Sketching area: Free drawing and experimenting area. Rearrange or draw tiles without affecting the original. Copy tiles back to the main editor when ready.
+- Hexadecimal visualization with real-time editing
+- Tilemap editing
+- Mirror Window: Open a secondary window to rearrange tiles visually, while edits remain synced with the original tiles.
 
 ## Credits
 
@@ -48,8 +52,3 @@ TileBravo is a tile editor created for ROM hacking and translation of classic ti
 ## License
 
 MIT — permissive use and redistribution allowed with attribution (retain copyright notice).
-
-## Future Work (TBD)
-
-- Hexadecimal visualization with real-time editing
-- Tilemap editing

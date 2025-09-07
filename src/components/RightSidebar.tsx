@@ -93,69 +93,11 @@ export default function RightSidebar(props: Props) {
     onReDecode,
   } = props;
 
-  // Helper: preset palettes by current size
-  function presetOptions() {
-    const n = palette.length || (CODECS[codec].colors ?? (1 << CODECS[codec].bpp));
-    const makeGrayscale = (k: number) => Array.from({ length: k }, (_, i) => {
-      const t = k === 1 ? 0 : i / (k - 1);
-      const v = Math.round(255 * t).toString(16).padStart(2, "0");
-      return `#${v}${v}${v}`.toUpperCase();
-    });
-    const reverse = (arr: string[]) => arr.slice().reverse();
-    const gradient = (k: number, from: [number, number, number], to: [number, number, number]) =>
-      Array.from({ length: k }, (_, i) => {
-        const t = k === 1 ? 0 : i / (k - 1);
-        const r = Math.round(from[0] + (to[0] - from[0]) * t);
-        const g = Math.round(from[1] + (to[1] - from[1]) * t);
-        const b = Math.round(from[2] + (to[2] - from[2]) * t);
-        const hx = (x: number) => x.toString(16).padStart(2, "0").toUpperCase();
-        return `#${hx(r)}${hx(g)}${hx(b)}`;
-      });
-    const opts: { label: string; colors: string[] }[] = [];
-    if (n <= 4) {
-      const gray = makeGrayscale(4).slice(0, n);
-      opts.push(
-        { label: "Grayscale", colors: gray },
-        { label: "Grayscale Inverted", colors: reverse(gray).slice(0, n) },
-        { label: "Game Boy", colors: ["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"].slice(0, n) },
-        { label: "Primary Contrast", colors: ["#000000", "#FF0000", "#00FF00", "#0000FF"].slice(0, n) },
-        { label: "Blue/Orange", colors: ["#0B1E3B", "#E76F51", "#2A9D8F", "#FFFFFF"].slice(0, n) },
-      );
-    } else {
-      const gray16 = makeGrayscale(Math.max(16, n)).slice(0, n);
-      const cool = gradient(n, [10, 20, 60], [180, 220, 255]);
-      const warm = gradient(n, [60, 20, 10], [255, 220, 180]);
-      // simple rainbow
-      const rainbow = Array.from({ length: n }, (_, i) => {
-        const h = (i / n) * 360;
-        const s = 90, v = 95;
-        const c = (v / 100) * (s / 100);
-        const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-        const m = (v / 100) - c;
-        let r = 0, g = 0, b = 0;
-        if (h < 60) { r = c; g = x; b = 0; }
-        else if (h < 120) { r = x; g = c; b = 0; }
-        else if (h < 180) { r = 0; g = c; b = x; }
-        else if (h < 240) { r = 0; g = x; b = c; }
-        else if (h < 300) { r = x; g = 0; b = c; }
-        else { r = c; g = 0; b = x; }
-        const toHex = (f: number) => Math.round((f + m) * 255).toString(16).padStart(2, "0");
-        return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
-      });
-      opts.push(
-        { label: "Grayscale", colors: gray16 },
-        { label: "Grayscale Inverted", colors: reverse(gray16) },
-        { label: "Rainbow", colors: rainbow },
-        { label: "Cool → Light", colors: cool },
-        { label: "Warm ← Dark", colors: reverse(warm) },
-      );
-    }
-    return opts;
-  }
+  // Helper for preset palettes removed with the Color scheme dropdown
 
   const smallBtn = "h-8 px-2 border border-border rounded bg-surface hover:bg-muted inline-flex items-center justify-center";
   const inputBase = "border border-border rounded bg-surface text-foreground px-2 py-1";
-  
+
   // Minimal toggle only (no DnD, no persistence)
 
   function renderDocument() {
@@ -191,10 +133,21 @@ export default function RightSidebar(props: Props) {
               className={`${inputBase} flex-1`}
               title="Choose how bytes map to pixels."
             >
-              <option value="2bpp_planar">2bpp planar</option>
-              <option value="4bpp_planar">4bpp planar</option>
-              <option value="2bpp_planar_composite">2bpp planar composite</option>
-              <option value="4bpp_chunky_zip16">4bpp chunky (zip16)</option>
+              <option value="1bpp">1bpp</option>
+
+              <option value="2bpp_planar">2bpp planar (NES, GB)</option>
+              <option value="2bpp_planar_composite">2bpp planar composite (NES variants)</option>
+              <option value="2bpp_linear">2bpp linear (NG Pocket)</option>
+
+              <option value="4bpp_planar">4bpp planar (SNES, MD, SMS, GG)</option>
+              <option value="4bpp_linear">4bpp linear (MD, X68000)</option>
+              <option value="4bpp_linear_reverse">4bpp linear reverse (GBA, Virtual Boy)</option>
+              <option value="4bpp_chunky_zip16">4bpp chunky Zip16</option>
+
+              <option value="8bpp_planar">8bpp planar (SNES Mode 3/4)</option>
+              <option value="8bpp_linear">8bpp linear (GBA, NDS)</option>
+
+
             </select>
           </div>
           <div className="text-xs opacity-70">Choose how bytes map to pixels.</div>
@@ -306,7 +259,7 @@ export default function RightSidebar(props: Props) {
             />
           </div>
 
-          
+
 
           <div className="flex items-center gap-2">
             <label className="text-xs w-28">Viewport</label>
@@ -381,28 +334,7 @@ export default function RightSidebar(props: Props) {
             <div className="text-xs opacity-70">{props.paletteIndex + 1} / {props.paletteTotal}</div>
           )}
 
-          {/* Color scheme */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs w-28">Color scheme</label>
-            <select
-              className={`${inputBase} flex-1`}
-              onChange={(e) => {
-                const label = e.target.value;
-                const match = presetOptions().find(o => o.label === label);
-                if (match) {
-                  setPalette(match.colors);
-                  props.setPaletteName?.(label);
-                }
-              }}
-              title="Quickly apply a preset palette scheme"
-              value=""
-            >
-              <option value="" disabled>Choose a scheme…</option>
-              {presetOptions().map(o => (
-                <option key={o.label} value={o.label}>{o.label}</option>
-              ))}
-            </select>
-          </div>
+          {/* Color scheme dropdown removed to avoid redundancy */}
 
           {/* Actions toolbar */}
           <div className="flex items-center gap-2">

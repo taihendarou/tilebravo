@@ -2,6 +2,8 @@
 
 // React
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Edit } from "lucide-react";
 
 // Components
 import StatusBar from "../components/StatusBar";
@@ -15,9 +17,10 @@ import { CODECS } from "../lib/codecs";
 import { computeOffsets } from "../lib/offsets";
 import { toHex } from "../lib/utils/hex";
 import { renderCanvas, renderCanvasRegion } from "../lib/render";
+import type { PaletteDef } from "../lib/palettes";
+import { defaultPalettesFor } from "../lib/palettes";
 
 type ToolId = "select" | "pencil" | "eyedropper" | "line" | "bucket";
-type PaletteDef = { name: string; colors: string[] };
 type Selection = { x: number; y: number; w: number; h: number } | null;
 
 function clamp(n: number, min: number, max: number) {
@@ -53,66 +56,7 @@ function shouldPageStatic(tilesCount: number, viewOffset: number, tilesPerRow: n
   return remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
 }
 
-// Helpers de paleta fora do componente (identidade estável)
-function defaultPalettesFor(n: number): PaletteDef[] {
-  const makeGrayscale = (k: number): string[] =>
-    Array.from({ length: k }, (_, i) => {
-      const t = k === 1 ? 0 : i / (k - 1);
-      const v = Math.round(255 * t).toString(16).padStart(2, "0");
-      return `#${v}${v}${v}`.toUpperCase();
-    });
-  const gradient = (k: number, from: [number, number, number], to: [number, number, number]): string[] =>
-    Array.from({ length: k }, (_, i) => {
-      const t = k === 1 ? 0 : i / (k - 1);
-      const r = Math.round(from[0] + (to[0] - from[0]) * t);
-      const g = Math.round(from[1] + (to[1] - from[1]) * t);
-      const b = Math.round(from[2] + (to[2] - from[2]) * t);
-      const hx = (x: number) => x.toString(16).padStart(2, "0");
-      return `#${hx(r)}${hx(g)}${hx(b)}`.toUpperCase();
-    });
-  const reverse = (arr: string[]) => arr.slice().reverse();
-  const clampN = (arr: string[]) => arr.slice(0, n);
-
-  if (n <= 4) {
-    const gray = makeGrayscale(4);
-    return [
-      { name: "Grayscale", colors: clampN(gray) },
-      { name: "Grayscale Inverted", colors: clampN(reverse(gray)) },
-      { name: "GameBoy", colors: clampN(["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"]) },
-      { name: "Primary Contrast", colors: clampN(["#000000", "#FF0000", "#00FF00", "#0000FF"]) },
-      { name: "Blue/Orange", colors: clampN(["#0B1E3B", "#E76F51", "#2A9D8F", "#FFFFFF"]) },
-    ];
-  }
-  if (n <= 16) {
-    const gray16 = makeGrayscale(16);
-    const cool = gradient(16, [10, 20, 60], [180, 220, 255]);
-    const warm = gradient(16, [60, 20, 10], [255, 220, 180]);
-    const rainbow = Array.from({ length: 16 }, (_, i) => {
-      const h = (i / 16) * 360;
-      const s = 90, v = 95;
-      const c = (v / 100) * (s / 100);
-      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-      const m = (v / 100) - c;
-      let r = 0, g = 0, b = 0;
-      if (h < 60) { r = c; g = x; b = 0; }
-      else if (h < 120) { r = x; g = c; b = 0; }
-      else if (h < 180) { r = 0; g = c; b = x; }
-      else if (h < 240) { r = 0; g = x; b = c; }
-      else if (h < 300) { r = x; g = 0; b = c; }
-      else { r = c; g = 0; b = x; }
-      const toHex = (f: number) => Math.round((f + m) * 255).toString(16).padStart(2, "0");
-      return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
-    });
-    return [
-      { name: "Grayscale", colors: gray16.slice(0, n) },
-      { name: "Grayscale Inverted", colors: reverse(gray16).slice(0, n) },
-      { name: "Rainbow", colors: rainbow.slice(0, n) },
-      { name: "Cool → Light", colors: cool.slice(0, n) },
-      { name: "Warm ← Dark", colors: reverse(warm).slice(0, n) },
-    ];
-  }
-  return [{ name: "Grayscale", colors: makeGrayscale(n) }];
-}
+// defaultPalettesFor moved to src/lib/palettes
 
 // Auxiliares de imagem/paleta (puros, fora do componente)
 type RGB = [number, number, number];
@@ -223,10 +167,10 @@ export default function Page() {
   const [isViewportFocused, setIsViewportFocused] = useState(false);
 
   // Ferramenta
-  const [tool, setTool] = useState<ToolId>("pencil");
+  const [tool, setTool] = useState<ToolId>("select");
 
   // Codec
-  const [codec, setCodec] = useState<CodecId>("2bpp_planar");
+  const [codec, setCodec] = useState<CodecId>("4bpp_planar");
 
   // Paletas (múltiplas) e edição
   const [palettes, setPalettes] = useState<PaletteDef[]>([]);
@@ -278,11 +222,12 @@ export default function Page() {
       return pagingEnabled || remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
     })();
     let tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
+    let pageStart = 0;
     if (pageNeeded) {
       const pageTiles = currentPageTiles();
-      const start = Math.max(0, pageIndex * pageTiles);
-      const end = start + pageTiles;
-      tail = tail.slice(start, end);
+      pageStart = Math.max(0, pageIndex * pageTiles);
+      const end = pageStart + pageTiles;
+      tail = tail.slice(pageStart, end);
     }
     // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
     const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
@@ -301,8 +246,22 @@ export default function Page() {
     if (editBufferRef.current && editBufferRef.current.size > 0) {
       overlay = new Map();
       for (const [idx, tile] of editBufferRef.current) {
-        const local = (idx - base) + padCount;
+        const local = (idx - base - pageStart) + padCount;
         if (local >= 0 && local < tilesToRender.length) overlay.set(local, tile);
+      }
+    }
+    // During selection move preview: blank out the source area so it looks like a true move
+    if (selection && selectionDragRef.current.mode === "move") {
+      if (!overlay) overlay = new Map();
+      const blankTile = new Uint8Array(TILE_W * TILE_H);
+      const baseGlobal = Math.max(0, viewOffset) + (pageNeeded ? pageStart : 0);
+      for (let jy = 0; jy < selection.h; jy++) {
+        for (let jx = 0; jx < selection.w; jx++) {
+          const gIdx = baseGlobal + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
+          if (gIdx < 0 || gIdx >= tilesRef.current.length) continue;
+          const local = padCount + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
+          if (local >= 0 && local < tilesToRender.length) overlay.set(local, blankTile);
+        }
       }
     }
     try { console.log("redrawNow:", { tilesToRender: tilesToRender.length, tilesPerRow, pixelSize, base, padCount, selection: !!selection, pagingEnabled, pageIndex }); } catch { }
@@ -364,11 +323,12 @@ export default function Page() {
         return pagingEnabled || remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
       })();
       let tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
+      let pageStart2 = 0;
       if (pageNeeded2) {
         const pageTiles = currentPageTiles();
-        const start = Math.max(0, pageIndex * pageTiles);
-        const end = start + pageTiles;
-        tail = tail.slice(start, end);
+        pageStart2 = Math.max(0, pageIndex * pageTiles);
+        const end = pageStart2 + pageTiles;
+        tail = tail.slice(pageStart2, end);
       }
       // Align generic parameter to match tail's Uint8Array<ArrayBufferLike>
       const blank: Uint8Array<ArrayBufferLike> = new Uint8Array(TILE_W * TILE_H);
@@ -386,8 +346,22 @@ export default function Page() {
       if (editBufferRef.current && editBufferRef.current.size > 0) {
         overlay = new Map();
         for (const [idx, tile] of editBufferRef.current) {
-          const local = (idx - base) + padCount;
+          const local = (idx - base - pageStart2) + padCount;
           if (local >= 0 && local < tilesToRender.length) overlay.set(local, tile);
+        }
+      }
+      // During selection move preview: blank out the source area so it looks like a true move
+      if (selection && selectionDragRef.current.mode === "move") {
+        if (!overlay) overlay = new Map();
+        const blankTile = new Uint8Array(TILE_W * TILE_H);
+        const baseGlobal = Math.max(0, viewOffset) + (pageNeeded2 ? pageStart2 : 0);
+        for (let jy = 0; jy < selection.h; jy++) {
+          for (let jx = 0; jx < selection.w; jx++) {
+            const gIdx = baseGlobal + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
+            if (gIdx < 0 || gIdx >= tilesRef.current.length) continue;
+            const local = padCount + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
+            if (local >= 0 && local < tilesToRender.length) overlay.set(local, blankTile);
+          }
         }
       }
 
@@ -448,6 +422,53 @@ export default function Page() {
   const [isDirty, setIsDirty] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [linePreviewEnd, setLinePreviewEnd] = useState<{ ax: number; ay: number } | null>(null);
+  // Track previous committed preview to ensure redraw when endpoint updates between frames
+  const prevLinePreviewEndRef = useRef<{ ax: number; ay: number } | null>(null);
+  useEffect(() => {
+    const prev = prevLinePreviewEndRef.current;
+    const curr = linePreviewEnd;
+    // If nothing to compare, just store and return
+    if (!prev && !curr) return;
+    const sx = lineRef.current.startAX;
+    const sy = lineRef.current.startAY;
+    let minAX: number, minAY: number, endAX: number, endAY: number;
+    if (prev && curr) {
+      minAX = Math.min(sx, prev.ax, curr.ax);
+      minAY = Math.min(sy, prev.ay, curr.ay);
+      endAX = Math.max(sx, prev.ax, curr.ax);
+      endAY = Math.max(sy, prev.ay, curr.ay);
+    } else if (prev && !curr) {
+      // clearing preview: cover start..prev
+      minAX = Math.min(sx, prev.ax);
+      minAY = Math.min(sy, prev.ay);
+      endAX = Math.max(sx, prev.ax);
+      endAY = Math.max(sy, prev.ay);
+    } else if (!prev && curr) {
+      // first commit: cover start..curr (curr é não-nulo aqui)
+      const c = curr;
+      minAX = Math.min(sx, c.ax);
+      minAY = Math.min(sy, c.ay);
+      endAX = Math.max(sx, c.ax);
+      endAY = Math.max(sy, c.ay);
+    } else {
+      // (prev == null && curr == null) já retornou acima; este else é apenas para sossegar o type narrowing
+      return;
+    }
+    // 1px safety padding and clamp to visible bounds
+    minAX -= 1; minAY -= 1; endAX += 1; endAY += 1;
+    const visibleCount = Math.max(0, tilesRef.current.length - viewOffset);
+    const rowsTotal = Math.ceil(visibleCount / Math.max(1, tilesPerRow));
+    const maxAX = Math.max(0, tilesPerRow * TILE_W - 1);
+    const maxAY = Math.max(0, rowsTotal * TILE_H - 1);
+    minAX = Math.max(0, Math.min(minAX, maxAX));
+    minAY = Math.max(0, Math.min(minAY, maxAY));
+    endAX = Math.max(0, Math.min(endAX, maxAX));
+    endAY = Math.max(0, Math.min(endAY, maxAY));
+    markDirtyRect(minAX, minAY, (endAX - minAX + 1), (endAY - minAY + 1));
+    prevLinePreviewEndRef.current = curr;
+  }, [linePreviewEnd]);
+  // Redraw trigger tick to force re-render from latest state/closures
+  const [redrawTick, setRedrawTick] = useState<number>(0);
   // Linear view offset: index of the first visible tile
   const [viewOffset, setViewOffset] = useState<number>(0);
   function viewTileIndex(tx: number, ty: number): number {
@@ -550,6 +571,11 @@ export default function Page() {
   useEffect(() => {
     redrawNow();
   }, [palette, tilesPerRow, pixelSize, showTileGrid, showPixelGrid, viewportTilesX, viewportTilesY, tilesCount, viewOffset, pagingEnabled, pageIndex]);
+
+  // Redraw driven by external imperative actions (e.g., global key handlers)
+  useEffect(() => {
+    if (redrawTick > 0) redrawNow();
+  }, [redrawTick]);
 
   // Ensure viewOffset stays within [0, tilesCount-1] after decodes/resizes
   useEffect(() => {
@@ -736,6 +762,30 @@ export default function Page() {
         if (k === "i") { setTool("eyedropper"); e.preventDefault(); return; }
         if (k === "l") { setTool("line"); e.preventDefault(); return; }
         if (k === "g") { setTool("bucket"); e.preventDefault(); return; }
+
+        // Delete/Backspace: limpar tiles da seleção com índice 0
+        if (e.key === "Delete" || e.key === "Backspace") {
+          if (!ctx.isViewportFocused) return; // evita apagar fora do viewport
+          const sel = ctx.selection;
+          if (!sel) return;
+          const { x, y, w, h } = sel;
+          // Aplica diretamente nos tiles e força redraw síncrono do canvas
+          const prev = tilesRef.current;
+          const next = prev.slice();
+          const base = Math.max(0, ctx.viewOffset) + (ctx.pagingEnabled ? (ctx.pageIndex * Math.max(1, ctx.pageTiles)) : 0);
+          for (let ty = 0; ty < h; ty++) {
+            for (let tx = 0; tx < w; tx++) {
+              const idx = base + (y + ty) * Math.max(1, ctx.tilesPerRow) + (x + tx);
+              if (idx >= 0 && idx < next.length) next[idx] = new Uint8Array(TILE_W * TILE_H);
+            }
+          }
+          tilesRef.current = next;
+          // sinaliza redraw pelo caminho reativo (fecha ciclo com closures atuais)
+          setRedrawTick(t => t + 1);
+          setIsDirty(true);
+          e.preventDefault();
+          return;
+        }
       }
 
       // Zoom
@@ -744,6 +794,49 @@ export default function Page() {
 
       // Go to
       if (meta && e.key.toLowerCase() === "g") { e.preventDefault(); openGoToRef.current?.(); return; }
+
+      // Save/export BIN
+      if (meta && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        downloadBin();
+        return;
+      }
+
+      // Escape: cancel operations and clear selection/preview
+      if (!meta && !e.ctrlKey && !e.altKey && e.key === "Escape") {
+        let did = false;
+        // cancel line drawing preview
+        if (lineRef.current.drawing) {
+          lineRef.current.drawing = false;
+          setLinePreviewEnd(null);
+          lineRafPendingRef.current = false;
+          lineDraftRef.current = null;
+          did = true;
+        }
+        // cancel pencil drawing (discard live edit buffer)
+        if (pencilRef.current.drawing) {
+          pencilRef.current.drawing = false;
+          editBufferRef.current = null;
+          did = true;
+        }
+        // cancel selection drag
+        if (selectionDragRef.current.mode !== "none") {
+          selectionDragRef.current.mode = "none";
+          selectionDragRef.current.previewDX = 0;
+          selectionDragRef.current.previewDY = 0;
+          did = true;
+        }
+        // clear selection
+        if (ctx.selection) {
+          setSelection(null);
+          did = true;
+        }
+        if (did) {
+          e.preventDefault();
+          setRedrawTick(t => t + 1);
+        }
+        return;
+      }
 
       // Copiar
       if (meta && e.key.toLowerCase() === "c") {
@@ -1169,6 +1262,8 @@ export default function Page() {
       lineRef.current.startAX = ax;
       lineRef.current.startAY = ay;
       setLinePreviewEnd({ ax, ay });
+      // Garantir que o pixel inicial do preview apareça imediatamente
+      markDirtyRect(ax, ay, 1, 1);
       return;
     }
 
@@ -1304,10 +1399,24 @@ export default function Page() {
       const ay = ty * TILE_H + py;
       // mark dirty for previous preview line and new one
       const prevEnd = linePreviewEnd || { ax: lineRef.current.startAX, ay: lineRef.current.startAY };
-      const minAX = Math.max(0, Math.min(prevEnd.ax, ax));
-      const minAY = Math.max(0, Math.min(prevEnd.ay, ay));
-      const endAX = Math.max(prevEnd.ax, ax);
-      const endAY = Math.max(prevEnd.ay, ay);
+      const sx = lineRef.current.startAX;
+      const sy = lineRef.current.startAY;
+      // Redesenhar a caixa que cobre início, fim anterior e fim atual
+      let minAX = Math.min(sx, prevEnd.ax, ax);
+      let minAY = Math.min(sy, prevEnd.ay, ay);
+      let endAX = Math.max(sx, prevEnd.ax, ax);
+      let endAY = Math.max(sy, prevEnd.ay, ay);
+      // Padding de segurança de 1px nas bordas para evitar restos em diagonais
+      minAX -= 1; minAY -= 1; endAX += 1; endAY += 1;
+      // Clamp para a área visível
+      const visibleCount = Math.max(0, tilesRef.current.length - viewOffset);
+      const rowsTotal = Math.ceil(visibleCount / Math.max(1, tilesPerRow));
+      const maxAX = Math.max(0, tilesPerRow * TILE_W - 1);
+      const maxAY = Math.max(0, rowsTotal * TILE_H - 1);
+      minAX = Math.max(0, Math.min(minAX, maxAX));
+      minAY = Math.max(0, Math.min(minAY, maxAY));
+      endAX = Math.max(0, Math.min(endAX, maxAX));
+      endAY = Math.max(0, Math.min(endAY, maxAY));
       markDirtyRect(minAX, minAY, (endAX - minAX + 1), (endAY - minAY + 1));
       lineDraftRef.current = { ax, ay };
       if (!lineRafPendingRef.current) {
@@ -1440,11 +1549,18 @@ export default function Page() {
           }
 
           tilesRef.current = next;
-          scheduleRedraw();
-          // mark source and destination rectangles dirty
-          markDirtyRect(src.x * TILE_W, src.y * TILE_H, src.w * TILE_W, src.h * TILE_H);
-          markDirtyRect(dstX * TILE_W, dstY * TILE_H, src.w * TILE_W, src.h * TILE_H);
-          setSelection({ x: dstX, y: dstY, w: src.w, h: src.h });
+          // finalize estado do drag antes de redesenhar
+          selectionDragRef.current.mode = "none";
+          selectionDragRef.current.previewDX = 0;
+          selectionDragRef.current.previewDY = 0;
+          // Limpa seleção por um frame para garantir remoção do overlay antigo
+          setSelection(null);
+          setRedrawTick(t => t + 1);
+          // Na próxima frame, aplica a seleção na posição final
+          requestAnimationFrame(() => {
+            setSelection({ x: dstX, y: dstY, w: src.w, h: src.h });
+            setRedrawTick(t => t + 1);
+          });
         }
         setIsDirty(true);
       }
@@ -1458,8 +1574,32 @@ export default function Page() {
 
   const onCanvasMouseLeave = () => {
     setHoverInfo({ tileOffsetHex: null, pixelOffsetHex: null, pixelColorHex: null, pixelColorIndex: null });
-    setLinePreviewEnd(null);
-    lineRef.current.drawing = false;
+    // Se estiver no meio do preview da linha, cancelar como o Esc e limpar a área
+    if (lineRef.current.drawing) {
+      const prevEnd = linePreviewEnd || { ax: lineRef.current.startAX, ay: lineRef.current.startAY };
+      const sx = lineRef.current.startAX;
+      const sy = lineRef.current.startAY;
+      // padding de segurança de 1px
+      let minAX = Math.min(sx, prevEnd.ax) - 1;
+      let minAY = Math.min(sy, prevEnd.ay) - 1;
+      let endAX = Math.max(sx, prevEnd.ax) + 1;
+      let endAY = Math.max(sy, prevEnd.ay) + 1;
+      const visibleCount = Math.max(0, tilesRef.current.length - viewOffset);
+      const rowsTotal = Math.ceil(visibleCount / Math.max(1, tilesPerRow));
+      const maxAX = Math.max(0, tilesPerRow * TILE_W - 1);
+      const maxAY = Math.max(0, rowsTotal * TILE_H - 1);
+      minAX = Math.max(0, Math.min(minAX, maxAX));
+      minAY = Math.max(0, Math.min(minAY, maxAY));
+      endAX = Math.max(0, Math.min(endAX, maxAX));
+      endAY = Math.max(0, Math.min(endAY, maxAY));
+      // marcar a região onde o preview estava para apagar no próximo redraw
+      markDirtyRect(minAX, minAY, (endAX - minAX + 1), (endAY - minAY + 1));
+      // cancelar preview (como Esc)
+      lineRef.current.drawing = false;
+      setLinePreviewEnd(null);
+      lineRafPendingRef.current = false;
+      lineDraftRef.current = null;
+    }
     if (pencilRef.current.drawing) {
       pencilRef.current.drawing = false;
       commitEditBuffer();
@@ -1471,8 +1611,14 @@ export default function Page() {
   function downloadBin() {
     const codecDef = CODECS[codec];
 
-    // Caso haja seleção: exporta somente os tiles da seleção, contíguos
+    // Caso haja seleção: confirmar exportar somente a seleção
     if (selection) {
+      const confirmed = window.confirm(
+        "There is an active selection. Do you want to export only the selected tiles?\n" +
+        "To export the entire file, click Cancel, deselect, and export again."
+      );
+      if (!confirmed) return;
+      // exporta somente os tiles da seleção, contíguos
       const picked: Uint8Array[] = [];
       const { x, y, w, h } = selection;
       for (let ty = 0; ty < h; ty++) {
@@ -1486,9 +1632,8 @@ export default function Page() {
       const blobSel = new Blob([outSel], { type: "application/octet-stream" });
       const aSel = document.createElement("a");
       aSel.href = URL.createObjectURL(blobSel);
-      let nameSel = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
-      nameSel += "_selection";
-      aSel.download = `${nameSel}_${codec}.bin`;
+      const nameSel = fileName || "untitled.bin";
+      aSel.download = nameSel;
       aSel.click();
       URL.revokeObjectURL(aSel.href);
       return;
@@ -1511,8 +1656,8 @@ export default function Page() {
       const blob = new Blob([out], { type: "application/octet-stream" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      const baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
-      a.download = `${baseName}_${codec}.bin`;
+      const name = fileName || "untitled.bin";
+      a.download = name;
       a.click();
       URL.revokeObjectURL(a.href);
       setIsDirty(false);
@@ -1526,8 +1671,8 @@ export default function Page() {
     const blob = new Blob([out], { type: "application/octet-stream" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    const baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
-    a.download = `${baseName}_${codec}.bin`;
+    const name = fileName || "untitled.bin";
+    a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
     setIsDirty(false);
@@ -1548,6 +1693,14 @@ export default function Page() {
   }
 
   function downloadPng() {
+    // Caso haja seleção: confirmar exportar somente a seleção
+    if (selection) {
+      const confirmed = window.confirm(
+        "There is an active selection. Do you want to export only the selected tiles?\n" +
+        "To export the entire file, click Cancel, deselect, and export again."
+      );
+      if (!confirmed) return;
+    }
     const { tiles: tilesExp, tilesPerRowExp } = collectTilesForExport();
     if (tilesExp.length === 0) return;
 
@@ -1573,9 +1726,8 @@ export default function Page() {
 
     const a = document.createElement("a");
     a.href = off.toDataURL("image/png");
-    let baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "tiles";
-    if (selection) baseName += "_selection";
-    a.download = `${baseName}_${codec}.png`;
+    const baseName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "untitled";
+    a.download = `${baseName}.png`;
     a.click();
   }
 
@@ -1729,14 +1881,15 @@ export default function Page() {
     markFullRedraw();
     setBaseOffsetHex("0");
     // Reset view and decode params per spec
-    setTileStrideBytes(16); // stride fixo 16 bytes
+    setTileStrideBytes(16);
     setTilesPerRow(16);
     setViewportTilesX(16);
     setViewportTilesY(16);
-    setPixelSize(4); // 400%
-    setCurrentColor(0); // cor índice 0
+    setPixelSize(4);
+    setCurrentColor(0);
     setViewOffset(0);
     setSelection(null);
+    setTool("select");
     if (fileInputRef.current) fileInputRef.current.value = "";
     setIsDirty(false);
   }
@@ -1851,6 +2004,26 @@ export default function Page() {
     setPalettes(defs);
     setCurrentPaletteIndex(0);
   }
+
+  const [showRename, setShowRename] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const renameOrigExtRef = useRef<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  // When opening rename modal, preselect only the basename (without extension)
+  useEffect(() => {
+    if (!showRename) return;
+    const el = renameInputRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      const val = el.value || "";
+      const dot = val.lastIndexOf(".");
+      const baseLen = dot > 0 ? dot : val.length;
+      try { el.setSelectionRange(0, baseLen); } catch { }
+    });
+  }, [showRename]);
 
   return (
     <main className="w-screen h-screen flex flex-col pb-1 overflow-hidden bg-background text-foreground">
@@ -1983,18 +2156,100 @@ export default function Page() {
         />
 
 
-        {/* Nome do arquivo */}
+        {/* Nome do arquivo + Rename */}
         <span
           className={
             "ml-auto text-xs truncate max-w-xs " +
             (isDirty ? "text-danger font-bold italic" : "opacity-70")
           }
+          title={fileName || "untitled.bin"}
         >
           {fileName ? `${isDirty ? "* " : ""}${fileName}` : "Nenhum arquivo"}
         </span>
+        <button
+          type="button"
+          className="ml-2 h-6 w-6 border border-border rounded bg-surface hover:bg-muted flex items-center justify-center shrink-0"
+          title="Rename file"
+          aria-label="Rename file"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const current = fileName || "untitled.bin";
+            setRenameDraft(current);
+            const dot = current.lastIndexOf(".");
+            renameOrigExtRef.current = (dot > 0 && dot < current.length - 1) ? current.slice(dot) : null;
+            setShowRename(true);
+          }}
+        >
+          <Edit size={14} />
+        </button>
 
 
       </header>
+      {mounted && showRename && createPortal(
+        <div className="fixed inset-0 z-[1000]">
+          <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setShowRename(false)} />
+          <div className="fixed inset-0 flex items-center justify-center p-4">
+            <div className="max-w-md w-full rounded-lg border border-border bg-background shadow-lg p-4 text-foreground text-sm" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+              <div className="flex items-center justify-between mb-2">
+                <h2 id="rename-title" className="text-base font-semibold">Rename File</h2>
+                <button className="px-2 py-1 text-xs rounded border border-border bg-surface hover:bg-muted" onClick={() => setShowRename(false)} aria-label="Close Rename">Close</button>
+              </div>
+              <label className="text-xs block mb-2" htmlFor="rename-input">Type new file name</label>
+              <input
+                id="rename-input"
+                className="w-full mb-1 border border-border rounded bg-surface text-foreground px-2 py-1"
+                ref={renameInputRef}
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { setShowRename(false); }
+                  if (e.key === "Enter") {
+                    const trimmed = (renameDraft || "").trim();
+                    if (!trimmed) return;
+                    let nextName = trimmed;
+                    if (!/\.[^./]+$/.test(trimmed)) {
+                      const ext = renameOrigExtRef.current;
+                      if (ext) {
+                        nextName = trimmed + ext;
+                      } else {
+                        alert("Please include a file extension (e.g., .bin)");
+                        return;
+                      }
+                    }
+                    setFileName(nextName);
+                    setShowRename(false);
+                  }
+                }}
+                autoFocus
+                placeholder="example.bin"
+              />
+              <div className="text-[11px] opacity-70 mb-2">Tip: If you omit the extension, the current one will be kept.</div>
+              <div className="flex items-center justify-end gap-2">
+                <button className="px-3 py-1 text-xs rounded border border-border bg-surface hover:bg-muted" onClick={() => setShowRename(false)}>Cancel</button>
+                <button
+                  className="px-3 py-1 text-xs rounded border border-primary bg-primary text-primary-foreground hover:opacity-90"
+                  onClick={() => {
+                    const trimmed = (renameDraft || "").trim();
+                    if (!trimmed) return;
+                    let nextName = trimmed;
+                    if (!/\.[^./]+$/.test(trimmed)) {
+                      const ext = renameOrigExtRef.current;
+                      if (ext) {
+                        nextName = trimmed + ext;
+                      } else {
+                        alert("Please include a file extension (e.g., .bin)");
+                        return;
+                      }
+                    }
+                    setFileName(nextName);
+                    setShowRename(false);
+                  }}
+                >Save</button>
+              </div>
+            </div>
+          </div>
+        </div>, document.body)
+      }
 
       {/* Conteúdo. toolbar esquerda | viewport | painel direita */}
       <div

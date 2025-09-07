@@ -108,7 +108,7 @@ export default function RightSidebar(props: Props) {
           <ChevronDown size={16} className="opacity-70 transition-transform group-open:rotate-180" />
         </summary>
         <div className="px-3 pb-3 space-y-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <label className="text-xs w-28">Format</label>
             <select
               value={codec}
@@ -130,7 +130,7 @@ export default function RightSidebar(props: Props) {
                   setPalette([]);
                 }
               }}
-              className={`${inputBase} flex-1`}
+              className={`${inputBase} flex-1 min-w-0 max-w-full truncate`}
               title="Choose how bytes map to pixels."
             >
               <option value="1bpp">1bpp</option>

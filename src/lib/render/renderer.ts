@@ -470,11 +470,14 @@ export function renderCanvasRegion(
     params.emptyTiles ?? undefined
   );
 
-  if (params.showTileGrid) {
-    drawGrid(ctx, colsIn, rowsOut, ps, "tile");
-  }
-  if (params.showPixelGrid) {
-    drawGrid(ctx, colsIn, rowsOut, ps, "pixel");
+  if (params.showTileGrid || params.showPixelGrid) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.ax * ps, rect.ay * ps, rect.aw * ps, rect.ah * ps);
+    ctx.clip();
+    if (params.showTileGrid) drawGrid(ctx, colsIn, rowsOut, ps, "tile");
+    if (params.showPixelGrid) drawGrid(ctx, colsIn, rowsOut, ps, "pixel");
+    ctx.restore();
   }
 
   if (params.selection && params.selectionPreview) {

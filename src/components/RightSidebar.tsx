@@ -295,8 +295,8 @@ export default function RightSidebar(props: Props) {
           <div className="flex items-center gap-3">
             <label className="text-xs w-28">Grid options</label>
             <div className="flex items-center gap-4">
-              <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={showTileGrid} onChange={e => setShowTileGrid(e.target.checked)} /> Show tile grid</label>
-              <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={showPixelGrid} onChange={e => setShowPixelGrid(e.target.checked)} /> Show pixel grid</label>
+              <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={showTileGrid} onChange={e => { setShowTileGrid(e.target.checked); e.target.blur(); }} /> Show tile grid</label>
+              <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={showPixelGrid} onChange={e => { setShowPixelGrid(e.target.checked); e.target.blur(); }} /> Show pixel grid</label>
             </div>
           </div>
 
@@ -305,7 +305,10 @@ export default function RightSidebar(props: Props) {
               <input
                 type="checkbox"
                 checked={!!rowInterleaved}
-                onChange={e => setRowInterleaved?.(e.target.checked)}
+                onChange={e => {
+                  setRowInterleaved?.(e.target.checked);
+                  e.target.blur();
+                }}
               />
               8×16 mode (row-interleaved)
             </label>

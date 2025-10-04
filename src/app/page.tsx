@@ -161,6 +161,13 @@ export default function Page() {
 
   // Ferramenta
   const [tool, setTool] = useState<ToolId>("select");
+  const selectTool = (nextTool: ToolId) => {
+    setTool((prev) => {
+      if (prev === nextTool) return prev;
+      if (nextTool !== "select") cancelSelectionState();
+      return nextTool;
+    });
+  };
 
   // Codec
   const [codec, setCodec] = useState<CodecId>("4bpp_planar");
@@ -381,6 +388,17 @@ export default function Page() {
   // View
   const [tilesPerRow, setTilesPerRow] = useState<number>(16);
   const [pixelSize, setPixelSize] = useState<number>(4);
+
+  function applyZoom(target: "in" | "out" | number, event: { preventDefault(): void }) {
+    if (typeof target === "number") {
+      setPixelSize(() => clamp(target, 1, 64));
+      event.preventDefault();
+      return;
+    }
+    const delta = target === "in" ? 1 : -1;
+    setPixelSize((p) => Math.max(1, Math.min(64, (p || 1) + delta)));
+    event.preventDefault();
+  }
   const [viewportTilesX, setViewportTilesX] = useState<number>(16);
   const [viewportTilesY, setViewportTilesY] = useState<number>(16);
   const [showTileGrid, setShowTileGrid] = useState<boolean>(true);
@@ -520,6 +538,22 @@ export default function Page() {
     previewDX: number;
     previewDY: number;
   }>({ mode: "none", startTX: 0, startTY: 0, startSel: null, previewDX: 0, previewDY: 0 });
+  function resetSelectionDrag() {
+    selectionDragRef.current = { mode: "none", startTX: 0, startTY: 0, startSel: null, previewDX: 0, previewDY: 0 };
+  }
+  const cancelSelectionState = (): boolean => {
+    let did = false;
+    if (selectionDragRef.current.mode !== "none") {
+      resetSelectionDrag();
+      did = true;
+    }
+    if (selectionRef.current) {
+      applySelection(null);
+      did = true;
+    }
+    if (did) setRedrawTick((t) => t + 1);
+    return did;
+  };
   // Throttle de seleção: aplica setSelection no máximo 1x por frame
   const selectionRafPendingRef = useRef(false);
   const selectionDraftRef = useRef<Selection>(null);
@@ -767,11 +801,11 @@ export default function Page() {
 
       if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         const k = e.key.toLowerCase();
-        if (k === "b") { setTool("pencil"); e.preventDefault(); return; }
-        if (k === "v") { setTool("select"); e.preventDefault(); return; }
-        if (k === "i") { setTool("eyedropper"); e.preventDefault(); return; }
-        if (k === "l") { setTool("line"); e.preventDefault(); return; }
-        if (k === "g") { setTool("bucket"); e.preventDefault(); return; }
+        if (k === "b") { selectTool("pencil"); e.preventDefault(); return; }
+        if (k === "v") { selectTool("select"); e.preventDefault(); return; }
+        if (k === "i") { selectTool("eyedropper"); e.preventDefault(); return; }
+        if (k === "l") { selectTool("line"); e.preventDefault(); return; }
+        if (k === "g") { selectTool("bucket"); e.preventDefault(); return; }
 
         // Delete/Backspace: limpar tiles da seleção com índice 0
         if (e.key === "Delete" || e.key === "Backspace") {
@@ -799,8 +833,8 @@ export default function Page() {
       }
 
       // Zoom
-      if (e.key === "=" || e.key === "+") { setPixelSize(p => Math.max(1, Math.min(64, (p || 1) + 1))); e.preventDefault(); }
-      if (e.key === "-" || e.key === "_") { setPixelSize(p => Math.max(1, Math.min(64, (p || 1) - 1))); e.preventDefault(); }
+      if (e.key === "=" || e.key === "+") { applyZoom("in", e); }
+      if (e.key === "-" || e.key === "_") { applyZoom("out", e); }
 
       // Go to
       if (meta && e.key.toLowerCase() === "g") { e.preventDefault(); openGoToRef.current?.(); return; }
@@ -829,18 +863,7 @@ export default function Page() {
           editBufferRef.current = null;
           did = true;
         }
-        // cancel selection drag
-        if (selectionDragRef.current.mode !== "none") {
-          selectionDragRef.current.mode = "none";
-          selectionDragRef.current.previewDX = 0;
-          selectionDragRef.current.previewDY = 0;
-          did = true;
-        }
-        // clear selection
-        if (ctx.selection) {
-          applySelection(null);
-          did = true;
-        }
+        if (cancelSelectionState()) did = true;
         if (did) {
           e.preventDefault();
           setRedrawTick(t => t + 1);
@@ -1315,7 +1338,7 @@ export default function Page() {
           previewDX: 0,
           previewDY: 0,
         };
-            applySelection({ x: startTX, y: startTY, w: 1, h: 1 });
+        applySelection({ x: startTX, y: startTY, w: 1, h: 1 });
       }
     }
 
@@ -2267,7 +2290,7 @@ export default function Page() {
         {/* Toolbar esquerda */}
         <Toolbox
           tool={tool}
-          onSelectTool={setTool}
+          onSelectTool={selectTool}
           onZoomIn={() => setPixelSize((p) => Math.max(1, Math.min(64, (p || 1) + 1)))}
           onZoomOut={() => setPixelSize((p) => Math.max(1, Math.min(64, (p || 1) - 1)))}
           palette={palette}

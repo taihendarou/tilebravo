@@ -49,13 +49,6 @@ const CANVAS_MAX_DIM = 32760;
 // Conservative pagination: force paging when remaining tiles exceed this
 const PAGING_TILE_THRESHOLD = 2048;
 
-function shouldPageStatic(tilesCount: number, viewOffset: number, tilesPerRow: number, pixelSize: number): boolean {
-  const remainingTiles = Math.max(0, tilesCount - Math.max(0, viewOffset));
-  const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
-  const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
-  return remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
-}
-
 // defaultPalettesFor moved to src/lib/palettes
 
 // Auxiliares de imagem/paleta (puros, fora do componente)
@@ -198,14 +191,14 @@ export default function Page() {
     scheduleRedraw();
   }
   function markDirtyRect(ax: number, ay: number, aw: number, ah: number) {
+    if (rowInterleaved) {
+      markFullRedraw();
+      return;
+    }
     if (aw <= 0 || ah <= 0) return;
     dirtyRectsRef.current.push({ ax, ay, aw, ah });
     scheduleRedraw();
   }
-  function markDirtyTile(tx: number, ty: number) {
-    markDirtyRect(tx * TILE_W, ty * TILE_H, TILE_W, TILE_H);
-  }
-
   function redrawNow() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -217,8 +210,8 @@ export default function Page() {
     const pageNeeded = (function () {
       const totalTilesLive = tilesRef.current.length;
       const remainingTiles = Math.max(0, totalTilesLive - Math.max(0, viewOffset));
-      const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
-      const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
+      const rowsTotal = computeDisplayRows(remainingTiles);
+      const heightPx = rowsTotal * TILE_H * Math.max(1, pixelSize);
       return pagingEnabled || remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
     })();
     let tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
@@ -250,20 +243,6 @@ export default function Page() {
         if (local >= 0 && local < tilesToRender.length) overlay.set(local, tile);
       }
     }
-    // During selection move preview: blank out the source area so it looks like a true move
-    if (selection && selectionDragRef.current.mode === "move") {
-      if (!overlay) overlay = new Map();
-      const blankTile = new Uint8Array(TILE_W * TILE_H);
-      const baseGlobal = Math.max(0, viewOffset) + (pageNeeded ? pageStart : 0);
-      for (let jy = 0; jy < selection.h; jy++) {
-        for (let jx = 0; jx < selection.w; jx++) {
-          const gIdx = baseGlobal + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
-          if (gIdx < 0 || gIdx >= tilesRef.current.length) continue;
-          const local = padCount + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
-          if (local >= 0 && local < tilesToRender.length) overlay.set(local, blankTile);
-        }
-      }
-    }
     try { console.log("redrawNow:", { tilesToRender: tilesToRender.length, tilesPerRow, pixelSize, base, padCount, selection: !!selection, pagingEnabled, pageIndex }); } catch { }
     try {
       renderCanvas(ctx, {
@@ -271,6 +250,7 @@ export default function Page() {
         palette,
         tilesPerRow,
         pixelSize,
+        rowInterleaved,
         showTileGrid,
         showPixelGrid,
         selection: selection ?? undefined,
@@ -318,8 +298,8 @@ export default function Page() {
       const pageNeeded2 = (function () {
         const totalTilesLive = tilesRef.current.length;
         const remainingTiles = Math.max(0, totalTilesLive - Math.max(0, viewOffset));
-        const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
-        const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
+        const rowsTotal = computeDisplayRows(remainingTiles);
+        const heightPx = rowsTotal * TILE_H * Math.max(1, pixelSize);
         return pagingEnabled || remainingTiles > PAGING_TILE_THRESHOLD || heightPx > CANVAS_MAX_DIM;
       })();
       let tail = tilesRef.current.slice(Math.min(base, Math.max(0, tilesRef.current.length)));
@@ -350,26 +330,12 @@ export default function Page() {
           if (local >= 0 && local < tilesToRender.length) overlay.set(local, tile);
         }
       }
-      // During selection move preview: blank out the source area so it looks like a true move
-      if (selection && selectionDragRef.current.mode === "move") {
-        if (!overlay) overlay = new Map();
-        const blankTile = new Uint8Array(TILE_W * TILE_H);
-        const baseGlobal = Math.max(0, viewOffset) + (pageNeeded2 ? pageStart2 : 0);
-        for (let jy = 0; jy < selection.h; jy++) {
-          for (let jx = 0; jx < selection.w; jx++) {
-            const gIdx = baseGlobal + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
-            if (gIdx < 0 || gIdx >= tilesRef.current.length) continue;
-            const local = padCount + (selection.y + jy) * Math.max(1, tilesPerRow) + (selection.x + jx);
-            if (local >= 0 && local < tilesToRender.length) overlay.set(local, blankTile);
-          }
-        }
-      }
-
       const params = {
         tiles: tilesToRender,
         palette,
         tilesPerRow,
         pixelSize,
+        rowInterleaved,
         showTileGrid,
         showPixelGrid,
         selection: selection ?? undefined,
@@ -419,6 +385,37 @@ export default function Page() {
   const [viewportTilesY, setViewportTilesY] = useState<number>(16);
   const [showTileGrid, setShowTileGrid] = useState<boolean>(true);
   const [showPixelGrid, setShowPixelGrid] = useState<boolean>(false);
+  const [rowInterleaved, setRowInterleaved] = useState<boolean>(false);
+  useEffect(() => {
+    markFullRedraw();
+  }, [rowInterleaved]);
+
+  function computeDisplayRows(totalTiles: number): number {
+    const cols = Math.max(1, tilesPerRow);
+    const rowsIn = Math.max(1, Math.ceil(Math.max(0, totalTiles) / cols));
+    if (!rowInterleaved) return rowsIn;
+    const rem = Math.max(0, totalTiles) % cols;
+    const lastRowEven = ((rowsIn - 1) & 1) === 0;
+    return rowsIn + (rem >= 2 && lastRowEven ? 1 : 0);
+  }
+
+  function mapDisplayToOrig(tx: number, ty: number): { ox: number; oy: number } {
+    if (!rowInterleaved) return { ox: tx, oy: ty };
+    const xOdd = (tx & 1) === 1;
+    const yOdd = (ty & 1) === 1;
+    if (xOdd && !yOdd) return { ox: tx - 1, oy: ty + 1 };
+    if (!xOdd && yOdd) return { ox: tx + 1, oy: ty - 1 };
+    return { ox: tx, oy: ty };
+  }
+
+  function mapOrigToDisplay(ox: number, oy: number): { dx: number; dy: number } {
+    if (!rowInterleaved) return { dx: ox, dy: oy };
+    const xOdd = (ox & 1) === 1;
+    const yOdd = (oy & 1) === 1;
+    if (xOdd && !yOdd) return { dx: ox - 1, dy: oy + 1 };
+    if (!xOdd && yOdd) return { dx: ox + 1, dy: oy - 1 };
+    return { dx: ox, dy: oy };
+  }
   const [isDirty, setIsDirty] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [linePreviewEnd, setLinePreviewEnd] = useState<{ ax: number; ay: number } | null>(null);
@@ -457,9 +454,9 @@ export default function Page() {
     // 1px safety padding and clamp to visible bounds
     minAX -= 1; minAY -= 1; endAX += 1; endAY += 1;
     const visibleCount = Math.max(0, tilesRef.current.length - viewOffset);
-    const rowsTotal = Math.ceil(visibleCount / Math.max(1, tilesPerRow));
+    const rowsTotalDisp = computeDisplayRows(visibleCount);
     const maxAX = Math.max(0, tilesPerRow * TILE_W - 1);
-    const maxAY = Math.max(0, rowsTotal * TILE_H - 1);
+    const maxAY = Math.max(0, rowsTotalDisp * TILE_H - 1);
     minAX = Math.max(0, Math.min(minAX, maxAX));
     minAY = Math.max(0, Math.min(minAY, maxAY));
     endAX = Math.max(0, Math.min(endAX, maxAX));
@@ -474,7 +471,12 @@ export default function Page() {
   function viewTileIndex(tx: number, ty: number): number {
     const pageTiles = currentPageTiles();
     const pageBase = pagingEnabled ? pageIndex * pageTiles : 0;
-    return viewOffset + pageBase + ty * Math.max(1, tilesPerRow) + tx;
+    const cols = Math.max(1, tilesPerRow);
+    if (rowInterleaved) {
+      const mapped = mapDisplayToOrig(tx, ty);
+      return viewOffset + pageBase + mapped.oy * cols + mapped.ox;
+    }
+    return viewOffset + pageBase + ty * cols + tx;
   }
   // Pagination state: auto-enabled if canvas height would exceed safe limit
   const [pagingEnabled, setPagingEnabled] = useState<boolean>(false);
@@ -502,6 +504,14 @@ export default function Page() {
 
   // Seleção e clipboard
   const [selection, setSelection] = useState<Selection>(null);
+  const selectionRef = useRef<Selection>(null);
+  const applySelection = (next: Selection) => {
+    selectionRef.current = next;
+    setSelection(next);
+  };
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
   const selectionDragRef = useRef<{
     mode: "none" | "new" | "move";
     startTX: number;
@@ -589,7 +599,7 @@ export default function Page() {
   // Auto-enable pagination when height would exceed safe limits OR tiles > threshold
   useEffect(() => {
     const remainingTiles = Math.max(0, tilesCount - Math.max(0, viewOffset));
-    const rowsTotalFull = Math.max(1, Math.ceil(remainingTiles / Math.max(1, tilesPerRow)));
+    const rowsTotalFull = computeDisplayRows(remainingTiles);
     const heightPx = rowsTotalFull * TILE_H * Math.max(1, pixelSize);
     const shouldPage = (remainingTiles > PAGING_TILE_THRESHOLD) || (heightPx > CANVAS_MAX_DIM);
     setPagingEnabled(shouldPage);
@@ -828,7 +838,7 @@ export default function Page() {
         }
         // clear selection
         if (ctx.selection) {
-          setSelection(null);
+          applySelection(null);
           did = true;
         }
         if (did) {
@@ -969,7 +979,7 @@ export default function Page() {
     // reset viewport when opening a new file
     setViewOffset(0);
     setPageIndex(0);
-    setSelection(null);
+    applySelection(null);
     setIsDirty(false);
   }
 
@@ -1025,9 +1035,10 @@ export default function Page() {
   // Paint bucket (flood fill 4-directions) over absolute pixel grid
   function bucketFill(axStart: number, ayStart: number) {
     const prev = tilesRef.current;
-    const width = tilesPerRow * TILE_W;
+    const colsDisp = Math.max(1, tilesPerRow);
+    const width = colsDisp * TILE_W;
     const visibleCount = Math.max(0, prev.length - viewOffset);
-    const rowsTotal = Math.ceil(visibleCount / tilesPerRow);
+    const rowsTotal = computeDisplayRows(visibleCount);
     const height = rowsTotal * TILE_H;
     if (axStart < 0 || ayStart < 0 || axStart >= width || ayStart >= height) return;
 
@@ -1181,7 +1192,6 @@ export default function Page() {
   function pencilApply(px: number, py: number, tx: number, ty: number) {
     const tileIndex = viewTileIndex(tx, ty);
     if (tileIndex < 0 || tileIndex >= tilesRef.current.length) return;
-    const idxInTile = py * TILE_W + px;
     const val = clamp(currentColor, 0, palette.length - 1);
     writePixelToEditBuffer(tileIndex, px, py, val);
     scheduleRedraw();
@@ -1280,8 +1290,8 @@ export default function Page() {
         tx < selection.x + selection.w &&
         ty < selection.y + selection.h;
 
+      const maxTy = computeDisplayRows(Math.max(0, tilesRef.current.length - viewOffset)) - 1;
       if (insideSel && selection) {
-        // iniciar move
         selectionDragRef.current = {
           mode: "move",
           startTX: tx,
@@ -1291,27 +1301,21 @@ export default function Page() {
           previewDY: 0,
         };
       } else {
-        // se já existia seleção e clicou fora dela → limpar
         if (selection) {
-          setSelection(null);
+          applySelection(null);
           selectionDragRef.current.mode = "none";
-        } else {
-          // iniciar nova seleção
-          selectionDragRef.current = {
-            mode: "new",
-            startTX: clamp(tx, 0, tilesPerRow - 1),
-            // clamp considerando viewOffset (linhas visíveis)
-            startTY: clamp(
-              ty,
-              0,
-              Math.ceil(Math.max(0, (tilesRef.current.length - viewOffset)) / Math.max(1, tilesPerRow)) - 1
-            ),
-            startSel: null,
-            previewDX: 0,
-            previewDY: 0,
-          };
-          setSelection({ x: tx, y: ty, w: 1, h: 1 });
         }
+        const startTX = clamp(tx, 0, Math.max(1, tilesPerRow) - 1);
+        const startTY = clamp(ty, 0, maxTy);
+        selectionDragRef.current = {
+          mode: "new",
+          startTX,
+          startTY,
+          startSel: null,
+          previewDX: 0,
+          previewDY: 0,
+        };
+            applySelection({ x: startTX, y: startTY, w: 1, h: 1 });
       }
     }
 
@@ -1410,7 +1414,7 @@ export default function Page() {
       minAX -= 1; minAY -= 1; endAX += 1; endAY += 1;
       // Clamp para a área visível
       const visibleCount = Math.max(0, tilesRef.current.length - viewOffset);
-      const rowsTotal = Math.ceil(visibleCount / Math.max(1, tilesPerRow));
+      const rowsTotal = computeDisplayRows(visibleCount);
       const maxAX = Math.max(0, tilesPerRow * TILE_W - 1);
       const maxAY = Math.max(0, rowsTotal * TILE_H - 1);
       minAX = Math.max(0, Math.min(minAX, maxAX));
@@ -1431,16 +1435,16 @@ export default function Page() {
 
     // 5) Lógica do seletor (criar/mover seleção)
     if (tool === "select" && mode !== "none") {
-      const maxTy = Math.ceil(Math.max(0, (tilesRef.current.length - viewOffset)) / tilesPerRow) - 1;
+      const maxTy = computeDisplayRows(Math.max(0, tilesRef.current.length - viewOffset)) - 1;
 
       if (mode === "new") {
         const rect = normRect(
           {
-            x: clamp(selectionDragRef.current.startTX, 0, tilesPerRow - 1),
+            x: clamp(selectionDragRef.current.startTX, 0, Math.max(1, tilesPerRow) - 1),
             y: clamp(selectionDragRef.current.startTY, 0, maxTy),
           },
           {
-            x: clamp(tx, 0, tilesPerRow - 1),
+            x: clamp(tx, 0, Math.max(1, tilesPerRow) - 1),
             y: clamp(ty, 0, maxTy),
           }
         );
@@ -1450,14 +1454,20 @@ export default function Page() {
           requestAnimationFrame(() => {
             selectionRafPendingRef.current = false;
             const draft = selectionDraftRef.current;
-            if (draft) setSelection(draft);
+            if (draft) applySelection(draft);
           });
         }
       } else if (mode === "move" && selectionDragRef.current.startSel) {
         const oldDX = selectionDragRef.current.previewDX;
         const oldDY = selectionDragRef.current.previewDY;
-        const dx = tx - selectionDragRef.current.startTX;
-        const dy = ty - selectionDragRef.current.startTY;
+        const dxRaw = tx - selectionDragRef.current.startTX;
+        const dyRaw = ty - selectionDragRef.current.startTY;
+        const sel0 = selectionDragRef.current.startSel;
+        const rowsTotalDisp = computeDisplayRows(Math.max(0, tilesRef.current.length - viewOffset));
+        const targetX = clamp(sel0.x + dxRaw, 0, Math.max(1, tilesPerRow) - sel0.w);
+        const targetY = clamp(sel0.y + dyRaw, 0, rowsTotalDisp - sel0.h);
+        const dx = targetX - sel0.x;
+        const dy = targetY - sel0.y;
         selectionDragRef.current.previewDX = dx;
         selectionDragRef.current.previewDY = dy;
         const sel = selectionDragRef.current.startSel;
@@ -1474,7 +1484,8 @@ export default function Page() {
           requestAnimationFrame(() => {
             selectionRafPendingRef.current = false;
             // forçar re-render do overlay de seleção
-            setSelection((prev) => (prev ? { ...prev } : prev));
+            const current = selectionRef.current;
+            applySelection(current ? { ...current } : current);
           });
         }
       }
@@ -1532,9 +1543,9 @@ export default function Page() {
             }
           }
 
-          const dstX = clamp(src.x + dx, 0, tilesPerRow - src.w);
-          const rowsTotal = Math.ceil(Math.max(0, (next.length - viewOffset)) / tilesPerRow);
-          const dstY = clamp(src.y + dy, 0, rowsTotal - src.h);
+          const dstX = clamp(src.x + dx, 0, Math.max(1, tilesPerRow) - src.w);
+          const rowsTotalDisp = computeDisplayRows(Math.max(0, next.length - viewOffset));
+          const dstY = clamp(src.y + dy, 0, rowsTotalDisp - src.h);
 
           let k = 0;
           for (let j = 0; j < src.h; j++) {
@@ -1553,14 +1564,8 @@ export default function Page() {
           selectionDragRef.current.mode = "none";
           selectionDragRef.current.previewDX = 0;
           selectionDragRef.current.previewDY = 0;
-          // Limpa seleção por um frame para garantir remoção do overlay antigo
-          setSelection(null);
+          applySelection({ x: dstX, y: dstY, w: src.w, h: src.h });
           setRedrawTick(t => t + 1);
-          // Na próxima frame, aplica a seleção na posição final
-          requestAnimationFrame(() => {
-            setSelection({ x: dstX, y: dstY, w: src.w, h: src.h });
-            setRedrawTick(t => t + 1);
-          });
         }
         setIsDirty(true);
       }
@@ -1718,6 +1723,7 @@ export default function Page() {
       palette,
       tilesPerRow: tilesPerRowExp,
       pixelSize: 1,
+      rowInterleaved: false,
       showTileGrid: false,
       showPixelGrid: false,
       selection: undefined,
@@ -1888,7 +1894,7 @@ export default function Page() {
     setPixelSize(4);
     setCurrentColor(0);
     setViewOffset(0);
-    setSelection(null);
+    applySelection(null);
     setTool("select");
     if (fileInputRef.current) fileInputRef.current.value = "";
     setIsDirty(false);
@@ -2135,7 +2141,7 @@ export default function Page() {
                 setTilesPerRow(tilesX);
                 setViewportTilesX(Math.max(viewportTilesX, tilesX));
                 setViewportTilesY(Math.max(viewportTilesY, tilesY));
-                setSelection(null);
+                applySelection(null);
               }
 
               scheduleRedraw();
@@ -2442,6 +2448,8 @@ export default function Page() {
           setShowTileGrid={setShowTileGrid}
           showPixelGrid={showPixelGrid}
           setShowPixelGrid={setShowPixelGrid}
+          rowInterleaved={rowInterleaved}
+          setRowInterleaved={setRowInterleaved}
           palette={palette}
           currentColor={currentColor}
           setPalette={setCurrentPaletteColors}
@@ -2473,12 +2481,13 @@ export default function Page() {
             setPageIndex(newPage);
             // Índice local dentro da página
             const local = Math.max(0, clamped - baseView - newPage * Math.max(1, pageTiles));
-            const tx = local % Math.max(1, tilesPerRow);
-            const ty = Math.floor(local / Math.max(1, tilesPerRow));
-            setSelection({ x: tx, y: ty, w: 1, h: 1 });
+            const origX = local % Math.max(1, tilesPerRow);
+            const origY = Math.floor(local / Math.max(1, tilesPerRow));
+            const mapped = mapOrigToDisplay(origX, origY);
+            applySelection({ x: mapped.dx, y: mapped.dy, w: 1, h: 1 });
             const ps = Math.max(1, pixelSize);
-            const xpx = tx * TILE_W * ps;
-            const ypx = ty * TILE_H * ps;
+            const xpx = mapped.dx * TILE_W * ps;
+            const ypx = mapped.dy * TILE_H * ps;
             const vp = innerViewportRef.current || viewportRef.current;
             const outer = viewportRef.current;
             if (vp) {

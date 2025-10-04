@@ -25,6 +25,9 @@
 *.pem
 TODO.md
 
+# Local manual QA docs (not tracked)
+docs/manual-tests-row-interleaved.md
+
 # debug
 npm-debug.log*
 yarn-debug.log*

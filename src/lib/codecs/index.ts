@@ -3,8 +3,9 @@ import type { TileCodec } from "../types";
 import { codec1bppLinear } from "./codec-1bpp-linear";
 import { codec2bppPlanar } from "./codec-2bpp-planar";
 import { codec2bppLinear } from "./codec-2bpp-linear";
-import { codec4bppPlanar } from "./codec-4bpp-planar";
 import { codec2bppPlanarComposite } from "./codec-2bpp-planar-composite";
+import { codec2bppChunkyZip16 } from "./codec-2bpp-chunky-zip16";
+import { codec4bppPlanar } from "./codec-4bpp-planar";
 import { codec4bppChunkyZip16 } from "./codec-4bpp-chunky-zip16";
 import { codec4bppLinearReverse } from "./codec-4bpp-linear-reverse";
 import { codec4bppLinear } from "./codec-4bpp-linear";
@@ -17,6 +18,7 @@ export const CODECS: Record<string, TileCodec> = {
   [codec2bppLinear.id]: codec2bppLinear,
   [codec4bppPlanar.id]: codec4bppPlanar,
   [codec2bppPlanarComposite.id]: codec2bppPlanarComposite,
+  [codec2bppChunkyZip16.id]: codec2bppChunkyZip16,
   [codec4bppChunkyZip16.id]: codec4bppChunkyZip16,
   [codec4bppLinearReverse.id]: codec4bppLinearReverse,
   [codec4bppLinear.id]: codec4bppLinear,

@@ -1,6 +1,6 @@
-# TileBravo (Beta)
+# TileBravo
 
-Version: v0.3.1-beta.1 [Changelog](./CHANGELOG.md)
+Version: v1.0.0 [Changelog](./CHANGELOG.md)
 
 TileBravo is a tile editor created for ROM hacking and translation of classic tile‑based games — an alternative/complement to editors like Tile Molester and YY‑CHR.
 
@@ -8,6 +8,8 @@ TileBravo is a tile editor created for ROM hacking and translation of classic ti
 
 - Live: https://tilebravo.hextinkers.org/
 - GitHub: https://github.com/taihendarou/tilebravo
+- Discord: https://discord.gg/5x7KZEqGfC
+- Shortcuts & quick actions: [docs/keyboard-shortcuts.md](./docs/keyboard-shortcuts.md)
 
 ## Usage (quick tour)
 

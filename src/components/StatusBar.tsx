@@ -13,16 +13,16 @@ type Props = {
   pixelColorIndex?: number | null;
   selectionSize?: string | null;
   zoomPercent?: number | null;
+  showSelectionHint?: boolean;
 };
 
 type Theme = "light" | "dark" | "navy";
 const THEMES: Theme[] = ["light", "dark", "navy"];
 
-export default function StatusBar({ tileOffsetHex, pixelOffsetHex, pixelColorHex, pixelColorIndex, selectionSize, zoomPercent }: Props) {
+export default function StatusBar({ tileOffsetHex, pixelOffsetHex, pixelColorHex, pixelColorIndex, selectionSize, zoomPercent, showSelectionHint }: Props) {
   const [theme, setTheme] = useState<Theme>("dark");
   const [showAbout, setShowAbout] = useState(false);
-  const version = (pkg as { version?: string })?.version;
-  const isBeta = typeof version === "string" && version.includes("-beta")
+  const version = (pkg as { version?: string })?.version ?? "1.0.0";
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
@@ -64,6 +64,11 @@ export default function StatusBar({ tileOffsetHex, pixelOffsetHex, pixelColorHex
         </span>
       </div>
       {selectionSize && <div>Selection: {selectionSize} tiles</div>}
+      {showSelectionHint && (
+        <div className="text-[11px] text-foreground/70">
+          Press Esc to cancel selection
+        </div>
+      )}
       <div className="ml-auto flex items-center gap-2">
         <button
           onClick={() => setShowAbout(true)}
@@ -90,8 +95,8 @@ export default function StatusBar({ tileOffsetHex, pixelOffsetHex, pixelColorHex
                   <h2 className="text-base font-semibold">About TileBravo</h2>
                   <button className="px-2 py-1 text-xs rounded border border-border bg-surface hover:bg-muted" onClick={() => setShowAbout(false)} aria-label="Close About">Close</button>
                 </div>
-                <div className="text-xs opacity-70 mb-2">Version: {version ?? "Beta"}{isBeta ? " (Beta)" : ""}</div>
-                <p>TileBravo is a tile editor created for ROM hacking and translation of classic games based on tiles — an alternative/complement to editors like Tile Molester and YY-CHR. This build is a public Beta.</p>
+                <div className="text-xs opacity-70 mb-2">Version: {version}</div>
+                <p>TileBravo is a tile editor created for ROM hacking and translation of classic games based on tiles — an alternative/complement to editors like Tile Molester and YY-CHR.</p>
                 <div className="mt-3 space-y-1">
                   <div className="font-medium">Author</div>
                   <div>Taihen</div>
@@ -107,6 +112,14 @@ export default function StatusBar({ tileOffsetHex, pixelOffsetHex, pixelColorHex
                 <div className="mt-2 space-y-1">
                   <div className="font-medium">GitHub</div>
                   <a className="underline" href="https://github.com/taihendarou/tilebravo" target="_blank" rel="noreferrer">github.com/taihendarou/tilebravo</a>
+                </div>
+                <div className="mt-2 space-y-1">
+                  <div className="font-medium">Community</div>
+                  <a className="underline" href="https://discord.gg/5x7KZEqGfC" target="_blank" rel="noreferrer">Join the Discord server</a>
+                </div>
+                <div className="mt-2 space-y-1">
+                  <div className="font-medium">Documentation</div>
+                  <a className="underline" href="https://github.com/taihendarou/tilebravo/blob/main/docs/keyboard-shortcuts.md" target="_blank" rel="noreferrer">Keyboard shortcuts & quick actions</a>
                 </div>
                 <div className="mt-2 space-y-1">
                   <div className="font-medium">Contact</div>

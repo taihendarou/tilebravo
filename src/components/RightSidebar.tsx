@@ -30,6 +30,9 @@ interface Props {
   setPalette: React.Dispatch<React.SetStateAction<string[]>>;
   setCurrentColor: (index: number) => void;
   onReDecode: () => void;
+  // layout
+  rowInterleaved?: boolean;
+  setRowInterleaved?: (v: boolean) => void;
   // palette manager
   paletteName?: string;
   setPaletteName?: (name: string) => void;
@@ -86,6 +89,8 @@ export default function RightSidebar(props: Props) {
     setShowTileGrid,
     showPixelGrid,
     setShowPixelGrid,
+    rowInterleaved,
+    setRowInterleaved,
     palette,
     currentColor,
     setPalette,
@@ -114,9 +119,13 @@ export default function RightSidebar(props: Props) {
               value={codec}
               onChange={e => {
                 const cid = e.target.value as CodecId;
-                setCodec(cid);
-                setTileStrideBytes(prev => Math.max(CODECS[cid].bytesPerTile, prev | 0));
                 const c = CODECS[cid];
+                if (!c) {
+                  console.warn("Unknown codec id selected:", cid);
+                  return;
+                }
+                setCodec(cid);
+                setTileStrideBytes(prev => Math.max(c.bytesPerTile, prev | 0));
                 if (c.pixelMode === "indexed") {
                   const colors = c.colors ?? (1 << c.bpp);
                   const fallback = Array.from({ length: colors }, (_, i) => {
@@ -133,11 +142,12 @@ export default function RightSidebar(props: Props) {
               className={`${inputBase} flex-1 min-w-0 max-w-full truncate`}
               title="Choose how bytes map to pixels."
             >
-              <option value="1bpp">1bpp</option>
+              <option value="1bpp_linear">1bpp</option>
 
               <option value="2bpp_planar">2bpp planar (NES, GB)</option>
               <option value="2bpp_planar_composite">2bpp planar composite (NES variants)</option>
               <option value="2bpp_linear">2bpp linear (NG Pocket)</option>
+              <option value="2bpp_chunky_zip16">2bpp chunky Zip16</option>
 
               <option value="4bpp_planar">4bpp planar (SNES, MD, SMS, GG)</option>
               <option value="4bpp_linear">4bpp linear (MD, X68000)</option>
@@ -259,8 +269,6 @@ export default function RightSidebar(props: Props) {
             />
           </div>
 
-
-
           <div className="flex items-center gap-2">
             <label className="text-xs w-28">Viewport</label>
             <input
@@ -290,6 +298,17 @@ export default function RightSidebar(props: Props) {
               <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={showTileGrid} onChange={e => setShowTileGrid(e.target.checked)} /> Show tile grid</label>
               <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={showPixelGrid} onChange={e => setShowPixelGrid(e.target.checked)} /> Show pixel grid</label>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!rowInterleaved}
+                onChange={e => setRowInterleaved?.(e.target.checked)}
+              />
+              8×16 mode (row-interleaved)
+            </label>
           </div>
         </div>
       </details>

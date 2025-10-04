@@ -1,3 +1,18 @@
+## v1.0.0
+
+### 8×16 Layout Experience
+- The new 8×16 view keeps tiles perfectly aligned, so deleting, copy/paste, and overlays now match what you see on screen.
+
+### Selection
+- Starting a new drag immediately replaces the previous selection, speeding up repetitive adjustments.
+- The status bar adds a subtle “Press Esc to cancel selection” reminder whenever tiles are highlighted.
+
+### Compatible Formats
+- Added support for the 2bpp chunky (zip16) codec, so you can open and save layouts used in games like Yu Yu Hakusho Final without manual conversions.
+
+### Tools
+- Switching tools now finishes any in-progress strokes and clears stale selections, preventing ghost artifacts from sticking around.
+
 ## v0.3.1-beta.1
 
 ### Export
